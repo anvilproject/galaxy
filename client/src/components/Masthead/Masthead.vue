@@ -1,8 +1,12 @@
 <template>
     <b-navbar id="masthead" type="dark" role="navigation" aria-label="Main" class="justify-content-center">
         <b-navbar-brand :href="brandLink" aria-label="homepage">
-            <img alt="logo" class="navbar-brand-image" :src="brandImage" />
-            <span class="navbar-brand-title">{{ brandTitle }}</span>
+            <a :href="brandLink">
+                <img alt="Galaxy Logo" class="navbar-brand-image align-middle" src="/static/images/galaxy_project_logo_white.png" />
+            </a>
+            <a href="https://anvil.terra.bio">
+                <img alt="Anvil Logo" class="navbar-brand-image align-middle" src="/static/images/anvilwhite.png" />
+            </a>
         </b-navbar-brand>
 
         <b-navbar-nav>
