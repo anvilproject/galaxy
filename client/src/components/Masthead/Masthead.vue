@@ -40,7 +40,7 @@ import { BNavbar, BNavbarBrand, BNavbarNav } from "bootstrap-vue";
 import MastheadItem from "./MastheadItem";
 import { fetchMenu } from "layout/menu";
 import { loadWebhookMenuItems } from "./_webhooks";
-import { c } from "onload/loadConfig";
+import { getAppRoot } from "onload/loadConfig";
 
 export default {
     name: "Masthead",
