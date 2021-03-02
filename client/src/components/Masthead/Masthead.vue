@@ -43,6 +43,7 @@ import { BNavbar, BNavbarBrand, BNavbarNav } from "bootstrap-vue";
 import MastheadItem from "./MastheadItem";
 import { fetchMenu } from "layout/menu";
 import { loadWebhookMenuItems } from "./_webhooks";
+import { getAppRoot } from "onload/loadConfig";
 
 export default {
     name: "Masthead",
@@ -141,10 +142,10 @@ export default {
             return tabs.map(this._tabToJson);
         },
         anvilLogoSrc() {
-            return `${this.appRoot}static/images/anvilwhite.png`;
+            return `${getAppRoot()}static/images/anvilwhite.png`;
         },
         galaxyLogoSrc() {
-            return `${this.appRoot}static/images/galaxy_project_logo_white_square.png`;
+            return `${getAppRoot()}static/images/galaxy_project_logo_white_square.png`;
         },
     },
     created() {
