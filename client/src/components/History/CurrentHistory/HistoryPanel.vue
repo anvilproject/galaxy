@@ -127,7 +127,7 @@
                                     @update:expand-dataset="setExpanded(item, $event)"
                                     @update:selected="setSelected(item, $event)"
                                     @view-collection="$emit('view-collection', item, currentOffset)"
-                                    @delete="onDelete(item)"
+                                    @delete="onDelete"
                                     @undelete="onUndelete(item)"
                                     @unhide="onUnhide(item)" />
                             </template>
@@ -310,6 +310,15 @@ export default {
         historyUpdateTime() {
             this.loadHistoryItems();
         },
+        itemsLoaded(newItems) {
+            if (this.invisible) {
+                newItems.forEach((item) => {
+                    if (this.invisible[item.hid]) {
+                        Vue.set(this.invisible, item.hid, false);
+                    }
+                });
+            }
+        },
     },
     async mounted() {
         // `filterable` here indicates if this is the current history panel
@@ -323,13 +332,15 @@ export default {
         ...mapActions(useHistoryItemsStore, ["fetchHistoryItems"]),
         getHighlight(item) {
             const highlightsKey = FilterClass.getFilterValue(this.filterText, "related");
-            if (highlightsKey == item.hid) {
-                return "active";
-            } else if (highlightsKey) {
-                if (item.hid > highlightsKey) {
-                    return "output";
-                } else {
-                    return "input";
+            if (!this.loading) {
+                if (highlightsKey == item.hid) {
+                    return "active";
+                } else if (highlightsKey) {
+                    if (item.hid > highlightsKey) {
+                        return "output";
+                    } else {
+                        return "input";
+                    }
                 }
             } else {
                 return null;
@@ -346,7 +357,6 @@ export default {
             try {
                 await this.fetchHistoryItems(this.historyId, this.filterText, this.offset);
                 this.searchError = null;
-                this.loading = false;
             } catch (error) {
                 if (error.response && error.response.data && error.response.data.err_msg) {
                     console.debug("HistoryPanel - Load items error:", error.response.data.err_msg);
@@ -354,12 +364,13 @@ export default {
                 } else {
                     console.debug("HistoryPanel - Load items error.", error);
                 }
+            } finally {
                 this.loading = false;
             }
         },
-        onDelete(item) {
+        onDelete(item, recursive = false) {
             this.setInvisible(item);
-            deleteContent(item);
+            deleteContent(item, { recursive: recursive });
         },
         onHideSelection(selectedItems) {
             selectedItems.forEach((item) => {

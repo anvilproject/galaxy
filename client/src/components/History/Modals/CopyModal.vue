@@ -36,7 +36,7 @@
         <div slot="modal-footer" slot-scope="{ ok, cancel }">
             <div>
                 <b-button class="mr-3" @click="cancel()"> Cancel </b-button>
-                <b-button :variant="saveVariant" :disabled="!formValid" @click="copy(ok)">
+                <b-button :variant="saveVariant" :disabled="loading || !formValid" @click="copy(ok)">
                     {{ saveTitle | localize }}
                 </b-button>
             </div>
@@ -61,7 +61,7 @@ export default {
         };
     },
     computed: {
-        ...mapState(useUserStore, ["isAnonymous"]),
+        ...mapState(useUserStore, ["currentUser", "isAnonymous"]),
         title() {
             return `Copying History: ${this.history.name}`;
         },
@@ -71,9 +71,12 @@ export default {
         saveVariant() {
             return this.loading ? "info" : this.formValid ? "primary" : "secondary";
         },
+        userOwnsHistory() {
+            return this.currentUser.id == this.history.user_id;
+        },
         newNameValid() {
-            if (this.name == this.history.name) {
-                return null;
+            if (this.userOwnsHistory && this.name == this.history.name) {
+                return false;
             }
             return this.name.length > 0;
         },

@@ -1057,7 +1057,15 @@ class WorkflowContentsManager(UsesAnnotations):
                     except KeyError:
                         continue
                 else:
-                    row_for_param(input_dict, input, values[input.name], other_values, prefix, step)
+                    row_for_param(
+                        input_dict,
+                        input,
+                        # Use values.get so that unspecified param values don't blow up the display
+                        values.get(input.name),
+                        other_values,
+                        prefix,
+                        step,
+                    )
                 input_dicts.append(input_dict)
             return input_dicts
 
@@ -1075,12 +1083,9 @@ class WorkflowContentsManager(UsesAnnotations):
                 step_dict["label"] = f"Unknown Tool with id '{e.tool_id}'"
                 step_dicts.append(step_dict)
                 continue
-            if step.type == "tool" or step.type is None:
-                tool = trans.app.toolbox.get_tool(step.tool_id)
-                if tool:
-                    step_dict["label"] = step.label or tool.name
-                else:
-                    step_dict["label"] = f"Unknown Tool with id '{step.tool_id}'"
+            if step.type == "tool":
+                tool = trans.app.toolbox.get_tool(step.tool_id, step.tool_version)
+                step_dict["label"] = step.label or tool.name
                 step_dict["inputs"] = do_inputs(tool.inputs, step.state.inputs, "", step)
             elif step.type == "subworkflow":
                 step_dict["label"] = step.label or (step.subworkflow.name if step.subworkflow else "Missing workflow.")
@@ -1158,6 +1163,8 @@ class WorkflowContentsManager(UsesAnnotations):
             input_connections_type = {}
             multiple_input = {}  # Boolean value indicating if this can be multiple
             if isinstance(module, ToolModule) and module.tool:
+                # Serialize tool version
+                step_dict["tool_version"] = module.tool.version
                 # Determine full (prefixed) names of valid input datasets
                 data_input_names = {}
 
@@ -1328,9 +1335,16 @@ class WorkflowContentsManager(UsesAnnotations):
         """
         annotation_str = ""
         tag_str = ""
+        annotation_owner = None
         if stored is not None:
             if stored.id:
-                annotation_str = self.get_item_annotation_str(trans.sa_session, trans.user, stored) or ""
+                # if the active user doesn't have an annotation on the workflow, default to the owner's annotation.
+                annotation_owner = stored.user
+                annotation_str = (
+                    self.get_item_annotation_str(trans.sa_session, trans.user, stored)
+                    or self.get_item_annotation_str(trans.sa_session, annotation_owner, stored)
+                    or ""
+                )
                 tag_str = stored.make_tag_string_list()
             else:
                 # dry run with flushed workflow objects, just use the annotation
@@ -1363,8 +1377,10 @@ class WorkflowContentsManager(UsesAnnotations):
             module = module_factory.from_workflow_step(trans, step)
             if not module:
                 raise exceptions.MessageException(f"Unrecognized step type: {step.type}")
-            # Get user annotation.
+            # Get user annotation if it exists, otherwise get owner annotation.
             annotation_str = self.get_item_annotation_str(trans.sa_session, trans.user, step) or ""
+            if not annotation_str and annotation_owner:
+                annotation_str = self.get_item_annotation_str(trans.sa_session, annotation_owner, step) or ""
             content_id = module.get_content_id() if allow_upgrade else step.content_id
             # Export differences for backward compatibility
             tool_state = module.get_export_state()
