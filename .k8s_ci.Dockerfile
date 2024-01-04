@@ -17,6 +17,7 @@
 # Init ARGs
 ARG ROOT_DIR=/galaxy
 ARG SERVER_DIR=$ROOT_DIR/server
+ARG HOME_DIR=$ROOT_DIR/home
 
 ARG STAGE1_BASE=python:3.10-slim
 ARG FINAL_STAGE_BASE=$STAGE1_BASE
@@ -168,7 +169,8 @@ RUN set -xe; \
 
 # Create Galaxy user, group, directory; chown
 RUN set -xe; \
-      adduser --system --group --uid $GALAXY_UID $GALAXY_USER \
+      mkdir -p $HOME_DIR \
+      && adduser --system --group --uid $GALAXY_UID --home $HOME_DIR $GALAXY_USER \
       && mkdir -p $SERVER_DIR \
       && chown $GALAXY_USER:$GALAXY_USER $ROOT_DIR -R
 
