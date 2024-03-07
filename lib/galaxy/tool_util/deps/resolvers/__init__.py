@@ -1,4 +1,5 @@
 """The module defines the abstract interface for dealing tool dependency resolution plugins."""
+
 import errno
 import os.path
 from abc import (
@@ -32,7 +33,7 @@ class DependencyResolver(Dictifiable, metaclass=ABCMeta):
         "can_uninstall_dependencies",
         "read_only",
     ]
-    # A "simple" dependency is one that does not depend on the the tool
+    # A "simple" dependency is one that does not depend on the tool
     # resolving the dependency. Classic tool shed dependencies are non-simple
     # because the repository install context is used in dependency resolution
     # so the same requirement tags in different tools will have very different

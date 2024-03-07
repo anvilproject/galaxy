@@ -1,14 +1,14 @@
-import InvocationsList from "./InvocationsList";
+import "jest-location-mock";
+
+import { createTestingPinia } from "@pinia/testing";
 import { mount } from "@vue/test-utils";
 import axios from "axios";
 import MockAdapter from "axios-mock-adapter";
+import { formatDistanceToNow, parseISO } from "date-fns";
 import { getLocalVue } from "tests/jest/helpers";
+
+import InvocationsList from "./InvocationsList";
 import mockInvocationData from "./test/json/invocation.json";
-import { parseISO, formatDistanceToNow } from "date-fns";
-
-import { createTestingPinia } from "@pinia/testing";
-
-import "jest-location-mock";
 
 const localVue = getLocalVue();
 
@@ -19,6 +19,8 @@ describe("InvocationsList.vue", () => {
 
     beforeEach(async () => {
         axiosMock = new MockAdapter(axios);
+        axiosMock.onGet(`api/invocations/${mockInvocationData.id}`).reply(200, mockInvocationData);
+        axiosMock.onGet(`api/invocations/${mockInvocationData.id}/jobs_summary`).reply(200, {});
     });
 
     afterEach(() => {
@@ -193,9 +195,10 @@ describe("InvocationsList.vue", () => {
             expect(mockMethod).toHaveBeenCalled();
         });
 
-        it("calls executeWorkflow", async () => {
-            await wrapper.find(".workflow-run").trigger("click");
-            expect(window.location).toBeAt("workflows/run?id=workflowId");
+        it("check run button", async () => {
+            const runButton = await wrapper.find('[data-workflow-run="workflowId"');
+
+            expect(runButton.attributes("href")).toBe("/workflows/run?id=workflowId");
         });
 
         it("should not render pager", async () => {

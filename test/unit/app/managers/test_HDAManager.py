@@ -1,11 +1,13 @@
 from unittest import mock
 
 import sqlalchemy
+from sqlalchemy import select
 
 from galaxy import (
     exceptions,
     model,
 )
+from galaxy.app_unittest_utils.galaxy_mock import mock_url_builder
 from galaxy.managers import hdas
 from galaxy.managers.datasets import DatasetManager
 from galaxy.managers.histories import HistoryManager
@@ -44,7 +46,7 @@ class TestHDAManager(HDATestCase):
         hda3 = self.hda_manager.create(history=history1, hid=3)
 
         self.log("should be able to query")
-        hdas = self.trans.sa_session.query(hda_model).all()
+        hdas = self.trans.sa_session.scalars(select(hda_model)).all()
         assert self.hda_manager.list() == hdas
         assert self.hda_manager.one(filters=(hda_model.id == hda1.id)) == hda1
         assert self.hda_manager.by_id(hda1.id) == hda1
@@ -70,7 +72,7 @@ class TestHDAManager(HDATestCase):
         self.log("should be able to create a new HDA with a specified history and dataset")
         hda1 = self.hda_manager.create(history=history1, dataset=dataset1)
         assert isinstance(hda1, model.HistoryDatasetAssociation)
-        assert hda1 == self.trans.sa_session.query(model.HistoryDatasetAssociation).get(hda1.id)
+        assert hda1 == self.trans.sa_session.get(model.HistoryDatasetAssociation, hda1.id)
         assert hda1.history == history1
         assert hda1.dataset == dataset1
         assert hda1.hid == 1
@@ -109,7 +111,7 @@ class TestHDAManager(HDATestCase):
         self.log("should be able to copy an HDA")
         hda2 = self.hda_manager.copy(hda1, history=history1)
         assert isinstance(hda2, model.HistoryDatasetAssociation)
-        assert hda2 == self.trans.sa_session.query(model.HistoryDatasetAssociation).get(hda2.id)
+        assert hda2 == self.trans.sa_session.get(model.HistoryDatasetAssociation, hda2.id)
         assert hda2.name == hda1.name
         assert hda2.history == hda1.history
         assert hda2.dataset == hda1.dataset
@@ -344,13 +346,7 @@ class TestHDAManager(HDATestCase):
     # def test_text_data( self ):
 
 
-# =============================================================================
-# web.url_for doesn't work well in the framework
-def testable_url_for(*a, **k):
-    return f"(fake url): {a}, {k}"
-
-
-@mock.patch("galaxy.managers.hdas.HDASerializer.url_for", testable_url_for)
+@mock.patch("galaxy.managers.hdas.HDASerializer.url_for", mock_url_builder)
 class TestHDASerializer(HDATestCase):
     def set_up_managers(self):
         super().set_up_managers()

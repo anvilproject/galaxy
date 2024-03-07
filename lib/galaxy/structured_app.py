@@ -1,4 +1,5 @@
 """Typed description of Galaxy's app object."""
+
 import abc
 from typing import (
     Any,
@@ -14,6 +15,7 @@ from galaxy.datatypes.registry import Registry
 from galaxy.di import Container
 from galaxy.files import ConfiguredFileSources
 from galaxy.job_metrics import JobMetrics
+from galaxy.managers.dbkeys import GenomeBuilds
 from galaxy.model.base import (
     ModelMapping,
     SharedModelMapping,
@@ -29,10 +31,10 @@ from galaxy.quota import QuotaAgent
 from galaxy.security.idencoding import IdEncodingHelper
 from galaxy.security.vault import Vault
 from galaxy.tool_shed.cache import ToolShedRepositoryCache
+from galaxy.tool_util.data import ToolDataTableManager
 from galaxy.tool_util.deps.containers import ContainerFinder
 from galaxy.tool_util.deps.views import DependencyResolversView
 from galaxy.tool_util.verify import test_data
-from galaxy.util.dbkeys import GenomeBuilds
 from galaxy.util.tool_shed.tool_shed_registry import Registry as ToolShedRegistry
 from galaxy.web_stack import ApplicationStack
 from galaxy.webhooks import WebhooksRegistry
@@ -48,7 +50,6 @@ if TYPE_CHECKING:
     from galaxy.tool_shed.galaxy_install.installed_repository_manager import InstalledRepositoryManager
     from galaxy.tools import ToolBox
     from galaxy.tools.cache import ToolCache
-    from galaxy.tools.data import ToolDataTableManager
     from galaxy.tools.error_reports import ErrorReports
     from galaxy.visualization.genomes import Genomes
 
@@ -67,9 +68,12 @@ class BasicSharedApp(Container):
     model: SharedModelMapping
     security: IdEncodingHelper
     auth_manager: AuthManager
-    toolbox: "ToolBox"
     security_agent: Any
     quota_agent: QuotaAgent
+
+    @property
+    def toolbox(self) -> "ToolBox":
+        raise NotImplementedError()
 
 
 class MinimalToolApp(Protocol):
@@ -92,6 +96,7 @@ class MinimalApp(BasicSharedApp):
     install_model: ModelMapping
     security_agent: GalaxyRBACAgent
     host_security_agent: HostAgent
+    server_starttime: int
 
 
 class MinimalManagerApp(MinimalApp):
@@ -121,11 +126,9 @@ class MinimalManagerApp(MinimalApp):
 
     @property
     @abc.abstractmethod
-    def is_job_handler(self) -> bool:
-        ...
+    def is_job_handler(self) -> bool: ...
 
-    def wait_for_toolbox_reload(self, old_toolbox: "ToolBox") -> None:
-        ...
+    def wait_for_toolbox_reload(self, old_toolbox: "ToolBox") -> None: ...
 
 
 class StructuredApp(MinimalManagerApp):
@@ -150,7 +153,7 @@ class StructuredApp(MinimalManagerApp):
     webhooks_registry: WebhooksRegistry
     queue_worker: Any  # 'galaxy.queue_worker.GalaxyQueueWorker'
     data_provider_registry: Any  # 'galaxy.visualization.data_providers.registry.DataProviderRegistry'
-    tool_data_tables: "ToolDataTableManager"
+    tool_data_tables: ToolDataTableManager
     tool_cache: "ToolCache"
     tool_shed_repository_cache: Optional[ToolShedRepositoryCache]
     watchers: "ConfigWatchers"

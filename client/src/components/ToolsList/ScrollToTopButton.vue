@@ -11,9 +11,9 @@
 </template>
 
 <script>
-import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import { library } from "@fortawesome/fontawesome-svg-core";
 import { faChevronUp } from "@fortawesome/free-solid-svg-icons";
+import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 
 library.add(faChevronUp);
 
@@ -35,6 +35,7 @@ export default {
     position: absolute;
     opacity: 0;
     transition: opacity 0.4s;
+    z-index: 1000;
 
     &.show {
         opacity: 1;

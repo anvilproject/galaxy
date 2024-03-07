@@ -20,7 +20,7 @@
                                 <b-card-body>
                                     Create a Galaxy account using an institutional account (e.g.:Google/JHU). This will
                                     redirect you to your institutional login through Custos.
-                                    <external-login :login_page="false" />
+                                    <ExternalLogin :login_page="false" />
                                 </b-card-body>
                             </b-collapse>
                         </span>
@@ -102,11 +102,11 @@
 </template>
 <script>
 import axios from "axios";
-import Vue from "vue";
 import BootstrapVue from "bootstrap-vue";
-import { withPrefix } from "utils/redirect";
 import ExternalLogin from "components/User/ExternalIdentities/ExternalLogin";
 import _l from "utils/localization";
+import { withPrefix } from "utils/redirect";
+import Vue from "vue";
 
 Vue.use(BootstrapVue);
 
@@ -193,7 +193,7 @@ export default {
                     if (response.data.message && response.data.status) {
                         alert(response.data.message);
                     }
-                    window.location = this.redirect || withPrefix("/welcome/new");
+                    window.location = this.redirect || withPrefix("/");
                 })
                 .catch((error) => {
                     this.disableCreate = false;

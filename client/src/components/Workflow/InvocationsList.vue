@@ -24,10 +24,11 @@
                     <small class="float-right" :data-invocation-id="row.item.id">
                         <b>Last updated: <UtcDate :date="row.item.update_time" mode="elapsed" />;</b>
                         <b
-                            >Invocation ID: <code>{{ row.item.id }}</code></b
+                            >Invocation ID:
+                            <router-link :to="invocationLink(row.item)">{{ row.item.id }}</router-link></b
                         >
                     </small>
-                    <workflow-invocation-state :invocation-id="row.item.id" @invocation-cancelled="refresh" />
+                    <WorkflowInvocationState :invocation-id="row.item.id" @invocation-cancelled="refresh" />
                 </b-card>
             </template>
             <template v-slot:cell(expand)="data">
@@ -50,7 +51,7 @@
                     :title="getStoredWorkflowNameByInstanceId(data.item.workflow_id)"
                     class="truncate">
                     <b-link href="#" @click.stop="swapRowDetails(data)">
-                        <b>{{ getStoredWorkflowNameByInstanceId(data.item.workflow_id) }}</b>
+                        {{ getStoredWorkflowNameByInstanceId(data.item.workflow_id) }}
                     </b-link>
                 </div>
             </template>
@@ -60,7 +61,7 @@
                     :title="`<b>Switch to</b><br>${getHistoryNameById(data.item.history_id)}`"
                     class="truncate">
                     <b-link id="switch-to-history" href="#" @click.stop="switchHistory(data.item.history_id)">
-                        <b>{{ getHistoryNameById(data.item.history_id) }}</b>
+                        {{ getHistoryNameById(data.item.history_id) }}
                     </b-link>
                 </div>
             </template>
@@ -69,6 +70,9 @@
             </template>
             <template v-slot:cell(update_time)="data">
                 <UtcDate :date="data.value" mode="elapsed" />
+            </template>
+            <template v-slot:cell(state)="data">
+                <HelpText :uri="`galaxy.invocations.states.${data.value}`" :text="data.value" />
             </template>
             <template v-slot:cell(execute)="data">
                 <WorkflowRunButton
@@ -86,22 +90,26 @@
 </template>
 
 <script>
-import { mapActions, mapState } from "pinia";
-import { useHistoryStore } from "@/stores/historyStore";
-
 import { getGalaxyInstance } from "app";
+import HelpText from "components/Help/HelpText";
 import { invocationsProvider } from "components/providers/InvocationsProvider";
-import WorkflowInvocationState from "components/WorkflowInvocationState/WorkflowInvocationState";
-import WorkflowRunButton from "./WorkflowRunButton.vue";
 import UtcDate from "components/UtcDate";
+import WorkflowInvocationState from "components/WorkflowInvocationState/WorkflowInvocationState";
+import { mapActions, mapState } from "pinia";
+
+import { useHistoryStore } from "@/stores/historyStore";
 import { useWorkflowStore } from "@/stores/workflowStore";
+
 import paginationMixin from "./paginationMixin";
+
+import WorkflowRunButton from "./WorkflowRunButton.vue";
 
 export default {
     components: {
         UtcDate,
         WorkflowInvocationState,
         WorkflowRunButton,
+        HelpText,
     },
     mixins: [paginationMixin],
     props: {
@@ -198,6 +206,8 @@ export default {
             const extraParams = this.ownerGrid ? {} : { include_terminal: false };
             if (this.storedWorkflowId) {
                 extraParams["workflow_id"] = this.storedWorkflowId;
+            } else {
+                extraParams["include_nested_invocations"] = false;
             }
             if (this.historyId) {
                 extraParams["history_id"] = this.historyId;
@@ -212,6 +222,9 @@ export default {
         },
         swapRowDetails(row) {
             row.toggleDetails();
+        },
+        invocationLink(item) {
+            return `/workflows/invocations/${item.id}`;
         },
         switchHistory(historyId) {
             const Galaxy = getGalaxyInstance();

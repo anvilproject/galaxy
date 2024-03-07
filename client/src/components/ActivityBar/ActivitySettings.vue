@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, ref, type Ref, type ComputedRef } from "vue";
-import { storeToRefs } from "pinia";
-import { useActivityStore, type Activity } from "@/stores/activityStore";
 import { library } from "@fortawesome/fontawesome-svg-core";
-import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import { faSquare } from "@fortawesome/free-regular-svg-icons";
-import { faCheckSquare, faTrash, faThumbtack } from "@fortawesome/free-solid-svg-icons";
+import { faCheckSquare, faThumbtack, faTrash } from "@fortawesome/free-solid-svg-icons";
+import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
+import { storeToRefs } from "pinia";
+import { computed, type ComputedRef, type Ref, ref } from "vue";
+
+import { type Activity, useActivityStore } from "@/stores/activityStore";
+
 import DelayedInput from "@/components/Common/DelayedInput.vue";
 
 library.add({
@@ -57,24 +59,24 @@ function onQuery(newQuery: string) {
 </script>
 
 <template>
-    <div class="activity-settings rounded p-3 no-highlight">
-        <delayed-input class="mb-3" :delay="100" placeholder="Search activities" @change="onQuery" />
-        <div v-if="foundActivities" class="activity-settings-content overflow-auto">
+    <div class="activity-settings rounded no-highlight">
+        <DelayedInput :delay="100" placeholder="Search activities" @change="onQuery" />
+        <div v-if="foundActivities" class="activity-settings-content">
             <div v-for="activity in filteredActivities" :key="activity.id">
-                <div class="activity-settings-item p-2 cursor-pointer" @click="onClick(activity)">
+                <button class="activity-settings-item p-2 cursor-pointer" @click="onClick(activity)">
                     <div class="d-flex justify-content-between align-items-start">
                         <span class="w-100">
-                            <font-awesome-icon
+                            <FontAwesomeIcon
                                 v-if="!activity.optional"
                                 class="icon-check mr-1"
                                 icon="fas fa-thumbtack"
                                 fa-fw />
-                            <font-awesome-icon
+                            <FontAwesomeIcon
                                 v-else-if="activity.visible"
                                 class="icon-check mr-1"
                                 icon="fas fa-check-square"
                                 fa-fw />
-                            <font-awesome-icon v-else class="mr-1" icon="far fa-square" fa-fw />
+                            <FontAwesomeIcon v-else class="mr-1" icon="far fa-square" fa-fw />
                             <small>
                                 <icon class="mr-1" :icon="activity.icon" />
                                 <span v-localize class="font-weight-bold">{{
@@ -89,13 +91,13 @@ function onQuery(newQuery: string) {
                             size="sm"
                             variant="link"
                             @click.stop="onRemove(activity)">
-                            <font-awesome-icon icon="fa-trash" fa-fw />
+                            <FontAwesomeIcon icon="fa-trash" fa-fw />
                         </b-button>
                     </div>
                     <small v-localize>
                         {{ activity.description || "No description available" }}
                     </small>
-                </div>
+                </button>
             </div>
         </div>
         <div v-else class="activity-settings-content">
@@ -108,14 +110,22 @@ function onQuery(newQuery: string) {
 @import "theme/blue.scss";
 
 .activity-settings {
-    width: 20rem;
+    overflow-y: hidden;
+    display: flex;
+    flex-direction: column;
 }
 
 .activity-settings-content {
-    height: 20rem;
+    overflow-y: auto;
 }
 
 .activity-settings-item {
+    background: none;
+    border: none;
+    text-align: left;
+    transition: none;
+    width: 100%;
+
     .icon-check {
         color: darken($brand-success, 15%);
     }

@@ -19,6 +19,8 @@ from typing import (
     Union,
 )
 
+from packaging.version import Version
+
 from galaxy.model import (
     DatasetCollection,
     DatasetCollectionElement,
@@ -128,7 +130,7 @@ class InputValueWrapper(ToolParameterValueWrapper):
             and input.type == "text"
             and input.optional
             and input.optionality_inferred
-            and (profile is None or profile < 23.0)
+            and (profile is None or Version(str(profile)) < Version("23.0"))
         ):
             # Tools with old profile versions may treat an optional text parameter as `""`
             value = ""
@@ -214,14 +216,17 @@ class SelectToolParameterWrapper(ToolParameterValueWrapper):
             self._input = input
             self._value = value
             self._other_values = other_values
-            self._fields: Dict[str, str] = {}
+            self._fields: Dict[str, List[str]] = {}
             self._compute_environment = compute_environment
 
         def __getattr__(self, name: str) -> Any:
             if name not in self._fields:
-                self._fields[name] = self._input.options.get_field_by_name_for_value(
-                    name, self._value, None, self._other_values
-                )
+                if isinstance(self._value, DatasetInstance):
+                    self._fields[name] = [self._input.options.get_option_from_dataset(self._value)[name]]
+                else:
+                    self._fields[name] = self._input.options.get_field_by_name_for_value(
+                        name, self._value, None, self._other_values
+                    )
             values = map(str, self._fields[name])
             if name in PATH_ATTRIBUTES and self._compute_environment:
                 # If we infer this is a path, rewrite it if needed.
@@ -300,7 +305,7 @@ class DatasetFilenameWrapper(ToolParameterValueWrapper):
             compute_environment: Optional["ComputeEnvironment"] = None,
         ) -> None:
             self.dataset = dataset
-            self.metadata: "MetadataCollection" = dataset.metadata
+            self.metadata: MetadataCollection = dataset.metadata
             self.compute_environment = compute_environment
 
         def __getattr__(self, name: str) -> Any:
@@ -468,13 +473,14 @@ class DatasetFilenameWrapper(ToolParameterValueWrapper):
         if self.false_path is not None:
             return self.false_path
         else:
-            return str(self.unsanitized.file_name)
+            return str(self.unsanitized.get_file_name())
+
+    @property
+    def file_name(self) -> str:
+        return str(self)
 
     def __getattr__(self, key: Any) -> Any:
-        if self.false_path is not None and key == "file_name":
-            # Path to dataset was rewritten for this job.
-            return self.false_path
-        elif key in ("extra_files_path", "files_path"):
+        if key in ("extra_files_path", "files_path"):
             if not self.compute_environment:
                 # Only happens in WrappedParameters context, refactor!
                 return self.unsanitized.extra_files_path
@@ -792,9 +798,8 @@ class ElementIdentifierMapper:
             self.identifier_key_dict = {}
 
     def identifier(self, dataset_value: str, input_values: Dict[str, str]) -> Optional[str]:
-        identifier_key = self.identifier_key_dict.get(dataset_value, None)
         element_identifier = None
-        if identifier_key:
+        if identifier_key := self.identifier_key_dict.get(dataset_value, None):
             element_identifier = input_values.get(identifier_key, None)
 
         return element_identifier

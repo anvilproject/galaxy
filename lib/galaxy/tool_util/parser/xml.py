@@ -5,7 +5,9 @@ import os
 import re
 import uuid
 from typing import (
+    Any,
     cast,
+    Dict,
     Iterable,
     List,
     Optional,
@@ -17,6 +19,8 @@ from galaxy.tool_util.deps import requirements
 from galaxy.tool_util.parser.util import (
     DEFAULT_DELTA,
     DEFAULT_DELTA_FRAC,
+    DEFAULT_EPS,
+    DEFAULT_METRIC,
 )
 from galaxy.util import (
     Element,
@@ -60,6 +64,8 @@ log = logging.getLogger(__name__)
 def inject_validates(inject):
     if inject == "api_key":
         return True
+    elif inject == "entry_point_path_for_label":
+        return True
     p = re.compile("^oidc_(id|access|refresh)_token_(.*)$")
     match = p.match(inject)
     return match is not None
@@ -89,7 +95,6 @@ def destroy_tree(tree):
 def parse_change_format(change_format: Iterable[Element]) -> List[ChangeFormatModel]:
     change_models: List[ChangeFormatModel] = []
     for change_elem in change_format:
-        change_elem = cast(Element, change_elem)
         for when_elem in change_elem.findall("when"):
             when_elem = cast(Element, when_elem)
             value: Optional[str] = when_elem.get("value", None)
@@ -119,14 +124,13 @@ class XmlToolSource(ToolSource):
     """Responsible for parsing a tool from classic Galaxy representation."""
 
     language = "xml"
-    root: Element
 
     def __init__(self, xml_tree: ElementTree, source_path=None, macro_paths=None):
         self.xml_tree = xml_tree
         self.root = self.xml_tree.getroot()
         self._source_path = source_path
         self._macro_paths = macro_paths or []
-        self.legacy_defaults = self.parse_profile() == "16.01"
+        self.legacy_defaults = Version(self.parse_profile()) == Version("16.01")
         self._string = xml_to_string(self.root)
 
     def to_string(self):
@@ -229,10 +233,13 @@ class XmlToolSource(ToolSource):
             template = environment_variable_el.text
             inject = environment_variable_el.get("inject")
             if inject:
-                assert not template, "Cannot specify inject and environment variable template."
                 assert inject_validates(inject)
-            if template:
-                assert not inject, "Cannot specify inject and environment variable template."
+            if inject == "entry_point_path_for_label":
+                assert (
+                    template
+                ), 'Environment variable value must contain entry point label when inject="entry_point_path_for_label".'
+            else:
+                assert not (template and inject), "Cannot specify inject and environment variable template."
             definition = {
                 "name": environment_variable_el.get("name"),
                 "template": template,
@@ -243,7 +250,7 @@ class XmlToolSource(ToolSource):
         return environment_variables
 
     def parse_home_target(self):
-        target = "job_home" if self.parse_profile() >= "18.01" else "shared_home"
+        target = "job_home" if Version(self.parse_profile()) >= Version("18.01") else "shared_home"
         command_el = self._command_el
         command_legacy = (command_el is not None) and command_el.get("use_shared_home", None)
         if command_legacy is not None:
@@ -303,8 +310,25 @@ class XmlToolSource(ToolSource):
             name = ep_el.get("name", None)
             if name:
                 name = name.strip()
+            label = ep_el.get("label", None)
+            if label:
+                label = label.strip()
             requires_domain = string_as_bool(ep_el.attrib.get("requires_domain", False))
-            rtt.append(dict(port=port, url=url, name=name, requires_domain=requires_domain))
+            requires_path_in_url = string_as_bool(ep_el.attrib.get("requires_path_in_url", False))
+            requires_path_in_header_named = ep_el.get("requires_path_in_header_named", None)
+            if requires_path_in_header_named:
+                requires_path_in_header_named = requires_path_in_header_named.strip()
+            rtt.append(
+                dict(
+                    port=port,
+                    url=url,
+                    name=name,
+                    label=label,
+                    requires_domain=requires_domain,
+                    requires_path_in_url=requires_path_in_url,
+                    requires_path_in_header_named=requires_path_in_header_named,
+                )
+            )
         return rtt
 
     def parse_hidden(self):
@@ -373,7 +397,7 @@ class XmlToolSource(ToolSource):
             style = out_elem.attrib["provided_metadata_style"]
 
         if style is None:
-            style = "legacy" if self.parse_profile() < "17.09" else "default"
+            style = "legacy" if Version(self.parse_profile()) < Version("17.09") else "default"
 
         assert style in ["legacy", "default"]
         return style
@@ -515,7 +539,7 @@ class XmlToolSource(ToolSource):
         output.filters = data_elem.findall("filter")
         output.tool = tool
         output.from_work_dir = data_elem.get("from_work_dir", None)
-        if output.from_work_dir and getattr(tool, "profile", 0) < 21.09:
+        if output.from_work_dir and Version(str(getattr(tool, "profile", 0))) < Version("21.09"):
             # We started quoting from_work_dir outputs in 21.09.
             # Prior to quoting, trailing spaces had no effect.
             # This ensures that old tools continue to work.
@@ -736,7 +760,7 @@ def __parse_element_tests(parent_element, profile=None):
         element_tests[identifier] = __parse_test_attributes(
             element, element_attrib, parse_elements=True, profile=profile
         )
-        if profile and profile >= "20.09":
+        if profile and Version(profile) >= Version("20.09"):
             element_tests[identifier][1]["expected_sort_order"] = idx
 
     return element_tests
@@ -766,6 +790,9 @@ def __parse_test_attributes(output_elem, attrib, parse_elements=False, parse_dis
     attributes["decompress"] = string_as_bool(attrib.pop("decompress", False))
     # `location` may contain an URL to a remote file that will be used to download `file` (if not already present on disk).
     location = attrib.get("location")
+    # Parameters for "image_diff" comparison
+    attributes["metric"] = attrib.pop("metric", DEFAULT_METRIC)
+    attributes["eps"] = float(attrib.pop("eps", DEFAULT_EPS))
     if location and file is None:
         file = os.path.basename(location)  # If no file specified, try to get filename from URL last component
     attributes["location"] = location
@@ -1273,6 +1300,56 @@ class XmlInputSource(InputSource):
             case_page_source = XmlPageSource(case_elem)
             sources.append((value, case_page_source))
         return sources
+
+    def parse_default(self) -> Optional[Dict[str, Any]]:
+        def file_default_from_elem(elem):
+            # TODO: hashes, created_from_basename, etc...
+            return {"class": "File", "location": elem.get("location")}
+
+        def read_elements(collection_elem):
+            element_dicts = []
+            elements = collection_elem.findall("element")
+            for element in elements:
+                identifier = element.get("name")
+                subcollection_elem = element.find("collection")
+                if subcollection_elem:
+                    collection_type = subcollection_elem.get("collection_type")
+                    element_dicts.append(
+                        {
+                            "class": "Collection",
+                            "identifier": identifier,
+                            "collection_type": collection_type,
+                            "elements": read_elements(subcollection_elem),
+                        }
+                    )
+                else:
+                    element_dict = file_default_from_elem(element)
+                    element_dict["identifier"] = identifier
+                    element_dicts.append(element_dict)
+            return element_dicts
+
+        elem = self.input_elem
+        element_type = self.input_elem.get("type")
+        if element_type == "data":
+            default_elem = elem.find("default")
+            if default_elem is not None:
+                return file_default_from_elem(default_elem)
+            else:
+                return None
+        else:
+            default_elem = elem.find("default")
+            if default_elem is not None:
+                default_elem = elem.find("default")
+                collection_type = default_elem.get("collection_type")
+                name = default_elem.get("name", elem.get("name"))
+                return {
+                    "class": "Collection",
+                    "name": name,
+                    "collection_type": collection_type,
+                    "elements": read_elements(default_elem),
+                }
+            else:
+                return None
 
 
 class ParallelismInfo:

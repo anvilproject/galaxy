@@ -17,6 +17,8 @@ export default {
             items: new Map(),
             showSelection: false,
             allSelected: false,
+            initSelectedItem: null,
+            initDirection: null,
         };
     },
     computed: {
@@ -29,12 +31,20 @@ export default {
         currentFilters() {
             return HistoryFilters.getFiltersForText(this.filterText);
         },
+        initSelectedKey() {
+            return this.initSelectedItem ? this.getItemKey(this.initSelectedItem) : null;
+        },
     },
     methods: {
         setShowSelection(val) {
             this.showSelection = val;
         },
-        selectAllInCurrentQuery(loadedItems = []) {
+        selectAllInCurrentQuery(loadedItems = [], force = true) {
+            // if we are not forcing selectAll, and all items are already selected; deselect them
+            if (!force && this.allSelected) {
+                this.setShowSelection(false);
+                return;
+            }
             this.selectItems(loadedItems);
             this.allSelected = true;
         },
@@ -51,6 +61,64 @@ export default {
             selected ? newSelected.set(key, item) : newSelected.delete(key);
             this.items = newSelected;
             this.breakQuerySelection();
+        },
+        shiftSelect(item, nextItem, eventKey) {
+            const currentItemKey = this.getItemKey(item);
+            if (!this.initSelectedKey) {
+                this.initSelectedItem = item;
+                this.initDirection = eventKey;
+                this.setSelected(item, true);
+            }
+            // got back to the initial selected item
+            else if (this.initSelectedKey === currentItemKey) {
+                this.initDirection = eventKey;
+            }
+            // same direction
+            else if (this.initDirection === eventKey) {
+                this.setSelected(item, true);
+            }
+            // different direction
+            else {
+                this.setSelected(item, false);
+            }
+            if (nextItem) {
+                this.setSelected(nextItem, true);
+            }
+        },
+        selectTo(item, prevItem, allItems, reset = true) {
+            if (prevItem && item) {
+                // we are staring a new shift+click selectTo from `prevItem`
+                if (!this.initSelectedKey) {
+                    this.initSelectedItem = prevItem;
+                }
+
+                // `reset = false` in the case user is holding shift+ctrl key
+                if (reset) {
+                    // clear this.items of any other selections
+                    this.items = new Map();
+                }
+                this.setSelected(this.initSelectedItem, true);
+
+                const initItemIndex = allItems.indexOf(this.initSelectedItem);
+                const currentItemIndex = allItems.indexOf(item);
+
+                let selections = [];
+                // from allItems, get the items between the init item and the current item
+                if (initItemIndex < currentItemIndex) {
+                    this.initDirection = "ArrowDown";
+                    selections = allItems.slice(initItemIndex + 1, currentItemIndex + 1);
+                } else if (initItemIndex > currentItemIndex) {
+                    this.initDirection = "ArrowUp";
+                    selections = allItems.slice(currentItemIndex, initItemIndex);
+                }
+                this.selectItems(selections);
+            } else {
+                this.setSelected(item, true);
+            }
+        },
+        initKeySelection() {
+            this.initSelectedItem = null;
+            this.initDirection = null;
         },
         selectItems(items = []) {
             const newItems = [...this.items.values(), ...items];
@@ -70,6 +138,7 @@ export default {
         reset() {
             this.items = new Map();
             this.allSelected = false;
+            this.initKeySelection();
         },
         cancelSelection() {
             this.showSelection = false;
@@ -107,9 +176,12 @@ export default {
             setShowSelection: this.setShowSelection,
             selectAllInCurrentQuery: this.selectAllInCurrentQuery,
             selectItems: this.selectItems,
+            selectTo: this.selectTo,
             isSelected: this.isSelected,
             setSelected: this.setSelected,
             resetSelection: this.reset,
+            shiftSelect: this.shiftSelect,
+            initKeySelection: this.initKeySelection,
         });
     },
 };

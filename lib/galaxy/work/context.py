@@ -1,8 +1,13 @@
 import abc
 from typing import (
+    Any,
+    Dict,
     List,
     Optional,
+    Tuple,
 )
+
+from typing_extensions import Literal
 
 from galaxy.managers.context import ProvidesHistoryContext
 from galaxy.model import (
@@ -40,8 +45,15 @@ class WorkRequestContext(ProvidesHistoryContext):
         self.__user_current_roles: Optional[List[Role]] = None
         self.__history = history
         self._url_builder = url_builder
+        self._short_term_cache: Dict[Tuple[str, ...], Any] = {}
         self.workflow_building_mode = workflow_building_mode
         self.galaxy_session = galaxy_session
+
+    def set_cache_value(self, args: Tuple[str, ...], value: Any):
+        self._short_term_cache[args] = value
+
+    def get_cache_value(self, args: Tuple[str, ...], default: Any = None) -> Any:
+        return self._short_term_cache.get(args, default)
 
     @property
     def app(self):
@@ -85,6 +97,14 @@ class GalaxyAbstractRequest:
     def host(self) -> str:
         """The host address."""
 
+    @abc.abstractproperty
+    def is_secure(self) -> bool:
+        """Was this a secure (https) request."""
+
+    @abc.abstractmethod
+    def get_cookie(self, name):
+        """Return cookie."""
+
 
 class GalaxyAbstractResponse:
     """Abstract interface to provide access to some response utilities."""
@@ -101,6 +121,21 @@ class GalaxyAbstractResponse:
 
     def get_content_type(self):
         return self.headers.get("content-type", None)
+
+    @abc.abstractmethod
+    def set_cookie(
+        self,
+        key: str,
+        value: str = "",
+        max_age: Optional[int] = None,
+        expires: Optional[int] = None,
+        path: str = "/",
+        domain: Optional[str] = None,
+        secure: bool = False,
+        httponly: bool = False,
+        samesite: Optional[Literal["lax", "strict", "none"]] = "lax",
+    ) -> None:
+        """Set a cookie."""
 
 
 class SessionRequestContext(WorkRequestContext):

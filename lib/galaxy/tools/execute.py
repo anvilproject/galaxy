@@ -3,6 +3,7 @@ Once state information has been calculated, handle actually executing tools
 from various states, tracking results, and building implicit dataset
 collections from matched collections.
 """
+
 import collections
 import logging
 import typing
@@ -17,6 +18,7 @@ from typing import (
 )
 
 from boltons.iterutils import remap
+from packaging.version import Version
 
 from galaxy import model
 from galaxy.exceptions import ToolInputsNotOKException
@@ -140,8 +142,7 @@ def execute(
             execution_tracker.record_error(result)
 
     tool_action = tool.tool_action
-    check_inputs_ready = getattr(tool_action, "check_inputs_ready", None)
-    if check_inputs_ready:
+    if check_inputs_ready := getattr(tool_action, "check_inputs_ready", None):
         for params in execution_tracker.param_combinations:
             # This will throw an exception if the tool is not ready.
             try:
@@ -174,11 +175,6 @@ def execute(
             history = execution_slice.history or history
             jobs_executed += 1
 
-    if job_datasets:
-        for job, datasets in job_datasets.items():
-            for dataset_instance in datasets:
-                dataset_instance.dataset.job = job
-
     if execution_slice:
         history.add_pending_items()
     # Make sure collections, implicit jobs etc are flushed even if there are no precreated output datasets
@@ -198,8 +194,13 @@ def execute(
             )
 
             raw_tool_source = tool.tool_source.to_string()
+            #  task_user_id parameter is used to do task user rate limiting. It is only passed
+            #  to first task in chain because it is only necessary to rate limit the first
+            #  task in a chain.
             async_result = (
-                setup_fetch_data.s(job_id, raw_tool_source=raw_tool_source)
+                setup_fetch_data.s(
+                    job_id, raw_tool_source=raw_tool_source, task_user_id=getattr(trans.user, "id", None)
+                )
                 | fetch_data.s(job_id=job_id)
                 | set_job_metadata.s(
                     extended_metadata_collection="extended" in tool.app.config.metadata_strategy,
@@ -305,7 +306,7 @@ class ExecutionTracker:
         return output_collection_name
 
     def sliced_input_collection_structure(self, input_name):
-        unqualified_recurse = self.tool.profile < 18.09 and "|" not in input_name
+        unqualified_recurse = Version(str(self.tool.profile)) < Version("18.09") and "|" not in input_name
 
         def find_collection(input_dict, input_name):
             for key, value in input_dict.items():

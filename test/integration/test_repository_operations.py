@@ -1,6 +1,8 @@
 import os
 from collections import namedtuple
 
+from sqlalchemy import select
+
 from galaxy.model.base import transaction
 from galaxy_test.base.populators import DatasetPopulator
 from galaxy_test.driver import integration_util
@@ -18,7 +20,6 @@ REVISION_4 = "071084070619"
 
 
 class TestRepositoryInstallIntegrationTestCase(integration_util.IntegrationTestCase, UsesShed):
-
     """Test data manager installation and table reload through the API"""
 
     @classmethod
@@ -86,7 +87,7 @@ class TestRepositoryInstallIntegrationTestCase(integration_util.IntegrationTestC
         hg_util.update_repository(repository_path, ctx_rev="3")
         # change repo to revision 3 in database
         model = self._app.install_model
-        tsr = model.context.query(model.ToolShedRepository).first()
+        tsr = model.session.scalars(select(model.ToolShedRepository).limit(1)).first()
         assert tsr.name == REPO.name
         assert tsr.changeset_revision == latest_revision
         assert int(tsr.ctx_rev) >= 4

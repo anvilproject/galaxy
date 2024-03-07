@@ -1,6 +1,7 @@
 """
 Support for running a tool in Galaxy via an internal job management system
 """
+
 import copy
 import datetime
 import errno
@@ -25,6 +26,7 @@ from typing import (
 import yaml
 from packaging.version import Version
 from pulsar.client.staging import COMMAND_VERSION_FILENAME
+from sqlalchemy import select
 
 from galaxy import (
     model,
@@ -59,7 +61,11 @@ from galaxy.jobs.runners import (
     JobState,
 )
 from galaxy.metadata import get_metadata_compute_strategy
-from galaxy.model import store
+from galaxy.model import (
+    Job,
+    store,
+    Task,
+)
 from galaxy.model.base import transaction
 from galaxy.model.store.discover import MaxDiscoveredFilesExceededError
 from galaxy.objectstore import ObjectStorePopulator
@@ -69,12 +75,12 @@ from galaxy.tool_util.output_checker import (
     check_output,
     DETECTED_JOB_STATE,
 )
+from galaxy.tool_util.parser.stdio import StdioErrorLevel
 from galaxy.tools.evaluation import (
     PartialToolEvaluator,
     ToolEvaluator,
 )
 from galaxy.util import (
-    etree,
     parse_xml_string,
     RWXRWXRWX,
     safe_makedirs,
@@ -160,8 +166,7 @@ def job_config_xml_to_dict(config, root):
     config_dict["runners"] = runners
 
     # Parser plugins section populate 'runners' and 'dynamic' in config_dict.
-    plugins = root.find("plugins")
-    if plugins is not None:
+    if (plugins := root.find("plugins")) is not None:
         for plugin in ConfiguresHandlers._findall_with_required(plugins, "plugin", ("id", "type", "load")):
             if plugin.get("type") == "runner":
                 workers = plugin.get("workers", plugins.get("workers", JobConfiguration.DEFAULT_NWORKERS))
@@ -238,8 +243,7 @@ def job_config_xml_to_dict(config, root):
     resource_groups = {}
 
     # Parse resources...
-    resources = root.find("resources")
-    if resources is not None:
+    if (resources := root.find("resources")) is not None:
         default_resource_group = resources.get("default", None)
         if default_resource_group:
             resources_config_dict["default"] = default_resource_group
@@ -254,9 +258,8 @@ def job_config_xml_to_dict(config, root):
     config_dict["resources"] = resources_config_dict
 
     # Parse tool mappings
-    tools = root.find("tools")
     config_dict["tools"] = []
-    if tools is not None:
+    if (tools := root.find("tools")) is not None:
         for tool in tools.findall("tool"):
             # There can be multiple definitions with identical ids, but different params
             tool_mapping_conf = {}
@@ -270,8 +273,7 @@ def job_config_xml_to_dict(config, root):
             config_dict["tools"].append(tool_mapping_conf)
 
     limits_config = []
-    limits = root.find("limits")
-    if limits is not None:
+    if (limits := root.find("limits")) is not None:
         for limit in JobConfiguration._findall_with_required(limits, "limit", ("type",)):
             limit_dict = {}
             for key in ["type", "tag", "id", "window"]:
@@ -642,7 +644,7 @@ class JobConfiguration(ConfiguresHandlers):
                             field_name, self.resource_parameters
                         )
                         raise KeyError(message)
-                    fields.append(etree.fromstring(self.resource_parameters[field_name]))
+                    fields.append(parse_xml_string(self.resource_parameters[field_name]))
 
                 if fields:
                     conditional_element = parse_xml_string(self.JOB_RESOURCE_CONDITIONAL_XML)
@@ -904,24 +906,24 @@ class JobConfiguration(ConfiguresHandlers):
         return rval
 
     def is_id(self, collection):
-        """Given a collection of handlers or destinations, indicate whether the collection represents a tag or a real ID
+        """Given a collection of handlers or destinations, indicate whether the collection represents a real ID
 
         :param collection: A representation of a destination or handler
         :type collection: tuple or list
 
         :returns: bool
         """
-        return type(collection) == tuple
+        return isinstance(collection, tuple)
 
     def is_tag(self, collection):
-        """Given a collection of handlers or destinations, indicate whether the collection represents a tag or a real ID
+        """Given a collection of handlers or destinations, indicate whether the collection represents a tag
 
         :param collection: A representation of a destination or handler
         :type collection: tuple or list
 
         :returns: bool
         """
-        return type(collection) == list
+        return isinstance(collection, list)
 
     def convert_legacy_destinations(self, job_runners):
         """Converts legacy (from a URL) destinations to contain the appropriate runner params defined in the URL.
@@ -1044,11 +1046,8 @@ class MinimalJobWrapper(HasResourceParameters):
     def remote_command_line(self):
         use_remote = self.get_destination_configuration("tool_evaluation_strategy") == "remote"
         # It wouldn't be hard to support history export, but we want to do this in task queue workers anyway ...
-        return (
-            use_remote
-            and self.external_output_metadata.extended
-            and not self.sa_session.query(model.JobExportHistoryArchive).filter_by(job=self.get_job()).first()
-        )
+        stmt = select(model.JobExportHistoryArchive).filter_by(job=self.get_job()).limit(1)
+        return use_remote and self.external_output_metadata.extended and not self.sa_session.scalars(stmt).first()
 
     def tool_directory(self):
         tool_dir = self.tool and self.tool.tool_dir
@@ -1183,7 +1182,7 @@ class MinimalJobWrapper(HasResourceParameters):
         return self.get_destination_configuration("galaxy_infrastructure_url")
 
     def get_job(self) -> model.Job:
-        return self.sa_session.query(model.Job).get(self.job_id)
+        return self.sa_session.get(Job, self.job_id)
 
     def get_id_tag(self):
         # For compatibility with drmaa, which uses job_id right now, and TaskWrapper
@@ -1234,10 +1233,11 @@ class MinimalJobWrapper(HasResourceParameters):
         job = self._load_job()
 
         def get_special():
-            jeha = self.sa_session.query(model.JobExportHistoryArchive).filter_by(job=job).first()
-            if jeha:
+            stmt = select(model.JobExportHistoryArchive).filter_by(job=job).limit(1)
+            if jeha := self.sa_session.scalars(stmt).first():
                 return jeha.fda
-            return self.sa_session.query(model.GenomeIndexToolData).filter_by(job=job).first()
+            stmt = select(model.GenomeIndexToolData).filter_by(job=job).limit(1)
+            return self.sa_session.scalars(stmt).first()
 
         # TODO: The upload tool actions that create the paramfile can probably be turned in to a configfile to remove this special casing
         if job.tool_id == "upload1":
@@ -1251,11 +1251,9 @@ class MinimalJobWrapper(HasResourceParameters):
             self.version_command_line,
             self.extra_filenames,
             self.environment_variables,
+            self.interactivetools,
         ) = tool_evaluator.build()
         job.command_line = self.command_line
-        if hasattr(self.app, "interactivetool_manager"):
-            self.interactivetools = tool_evaluator.populate_interactivetools()
-            self.app.interactivetool_manager.create_interactivetool(job, self.tool, self.interactivetools)
 
         # Ensure galaxy_lib_dir is set in case there are any later chdirs
         self.galaxy_lib_dir  # noqa: B018
@@ -1506,8 +1504,7 @@ class MinimalJobWrapper(HasResourceParameters):
         if job is None:
             job = self.get_job()
 
-        destination_params = job.destination_params
-        if "__resubmit_delay_seconds" in destination_params:
+        if "__resubmit_delay_seconds" in (destination_params := job.destination_params):
             delay = float(destination_params["__resubmit_delay_seconds"])
             if job.seconds_since_updated < delay:
                 return False
@@ -1525,13 +1522,14 @@ class MinimalJobWrapper(HasResourceParameters):
             self.sa_session.commit()
 
     def change_state(self, state, info=False, flush=True, job=None):
-        job_supplied = job is not None
-        if not job_supplied:
+        if job is None:
             job = self.get_job()
             self.sa_session.refresh(job)
-        # Else:
-        # If this is a new job (e.g. initially queued) - we are in the same
-        # thread and no other threads are working on the job yet - so don't refresh.
+        else:
+            # job attributes may have been changed, so we can't refresh here,
+            # but we want to make sure that the terminal state check below works
+            # on the current job state value to minimize race conditions.
+            self.sa_session.expire(job, ["state"])
 
         if job.state in model.Job.terminal_states:
             log.warning(
@@ -1543,9 +1541,10 @@ class MinimalJobWrapper(HasResourceParameters):
             return
         if info:
             job.info = info
-        job.set_state(state)
+        state_changed = job.set_state(state)
         self.sa_session.add(job)
-        job.update_output_states(self.app.application_stack.supports_skip_locked())
+        if state_changed:
+            job.update_output_states(self.app.application_stack.supports_skip_locked())
         if flush:
             with transaction(self.sa_session):
                 self.sa_session.commit()
@@ -1668,7 +1667,7 @@ class MinimalJobWrapper(HasResourceParameters):
                 # the outputs and set them accordingly
                 object_store_id_overrides = {o: preferred_outputs_object_store_id for o in output_names}
 
-                def split_object_stores(output_name):
+                def split_object_stores(output_name):  # noqa: F811 https://github.com/PyCQA/pyflakes/issues/783
                     if "|__part__|" in output_name:
                         output_name = output_name.split("|__part__|", 1)[0]
                     if output_name in output_names:
@@ -1717,8 +1716,8 @@ class MinimalJobWrapper(HasResourceParameters):
             while trynum < self.app.config.retry_job_output_collection:
                 try:
                     # Attempt to short circuit NFS attribute caching
-                    os.stat(dataset.dataset.file_name)
-                    os.chown(dataset.dataset.file_name, os.getuid(), -1)
+                    os.stat(dataset.dataset.get_file_name())
+                    os.chown(dataset.dataset.get_file_name(), os.getuid(), -1)
                     trynum = self.app.config.retry_job_output_collection
                 except (OSError, ObjectNotFound) as e:
                     trynum += 1
@@ -1740,7 +1739,7 @@ class MinimalJobWrapper(HasResourceParameters):
             dataset.dataset.uuid = context["uuid"]
         self.__update_output(job, dataset)
         if not purged:
-            collect_extra_files(self.object_store, dataset, self.working_directory)
+            collect_extra_files(self.object_store, dataset, self.working_directory, self.outputs_to_working_directory)
         if job.states.ERROR == final_job_state:
             dataset.blurb = "error"
             if not implicit_collection_jobs:
@@ -1765,19 +1764,19 @@ class MinimalJobWrapper(HasResourceParameters):
             )
             if not metadata_set_successfully:
                 if self.tool.tool_type == "expression":
-                    dataset._state = model.Dataset.states.OK
+                    dataset.set_metadata_success_state()
                 elif retry_internally:
                     # If Galaxy was expected to sniff type and didn't - do so.
                     if dataset.ext == "_sniff_":
                         extension = sniff.handle_uploaded_dataset_file(
-                            dataset.dataset.file_name, self.app.datatypes_registry
+                            dataset.dataset.get_file_name(), self.app.datatypes_registry
                         )
                         dataset.extension = extension
 
                     # call datatype.set_meta directly for the initial set_meta call during dataset creation
                     dataset.datatype.set_meta(dataset, overwrite=False)
                 else:
-                    dataset._state = model.Dataset.states.FAILED_METADATA
+                    dataset.state = model.HistoryDatasetAssociation.states.FAILED_METADATA
             else:
                 self.external_output_metadata.load_metadata(
                     dataset,
@@ -1941,7 +1940,13 @@ class MinimalJobWrapper(HasResourceParameters):
                 self.discover_outputs(job, inp_data, out_data, out_collections, final_job_state=final_job_state)
             except MaxDiscoveredFilesExceededError as e:
                 final_job_state = job.states.ERROR
-                job.job_messages = [str(e)]
+                job.job_messages = [
+                    {
+                        "type": "internal",
+                        "desc": str(e),
+                        "error_level": StdioErrorLevel.FATAL,
+                    }
+                ]
 
             for dataset_assoc in output_dataset_associations:
                 if getattr(dataset_assoc.dataset, "discovered", False):
@@ -2090,12 +2095,8 @@ class MinimalJobWrapper(HasResourceParameters):
         )
 
     def check_tool_output(self, tool_stdout, tool_stderr, tool_exit_code, job, job_stdout=None, job_stderr=None):
-        job_id_tag = "<unknown job id>"
-        if job is not None:
-            job_id_tag = job.get_id_tag()
-
         state, tool_stdout, tool_stderr, job_messages = check_output(
-            self.tool.stdio_regexes, self.tool.stdio_exit_codes, tool_stdout, tool_stderr, tool_exit_code, job_id_tag
+            self.tool.stdio_regexes, self.tool.stdio_exit_codes, tool_stdout, tool_stderr, tool_exit_code
         )
 
         # Store the modified stdout and stderr in the job:
@@ -2404,8 +2405,7 @@ class MinimalJobWrapper(HasResourceParameters):
     @property
     def user(self):
         job = self.get_job()
-        user_email = job.get_user_email()
-        if user_email:
+        if user_email := job.get_user_email():
             return user_email
         elif job.galaxy_session is not None:
             return f"anonymous@{job.galaxy_session.remote_addr.split()[-1]}"
@@ -2582,12 +2582,12 @@ class TaskWrapper(JobWrapper):
 
     def get_job(self):
         if self.job_id:
-            return self.sa_session.query(model.Job).get(self.job_id)
+            return self.sa_session.get(Job, self.job_id)
         else:
             return None
 
     def get_task(self):
-        return self.sa_session.query(model.Task).get(self.task_id)
+        return self.sa_session.get(Task, self.task_id)
 
     def get_id_tag(self):
         # For compatibility with drmaa job runner and TaskWrapper, instead of using job_id directly
@@ -2617,6 +2617,7 @@ class TaskWrapper(JobWrapper):
                 self.version_command_line,
                 extra_filenames,
                 self.environment_variables,
+                *_,
             ) = tool_evaluator.build()
             self.extra_filenames.extend(extra_filenames)
 

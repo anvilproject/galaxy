@@ -1,13 +1,15 @@
-import { createPinia } from "pinia";
 import { mount } from "@vue/test-utils";
-import { useUserStore } from "stores/userStore";
-import { useHistoryStore } from "stores/historyStore";
-import { getLocalVue } from "tests/jest/helpers";
-import flushPromises from "flush-promises";
-import HistoryView from "./HistoryView";
-import { getHistoryByIdFromServer, setCurrentHistoryOnServer } from "stores/services/history.services";
-import MockAdapter from "axios-mock-adapter";
 import axios from "axios";
+import MockAdapter from "axios-mock-adapter";
+import flushPromises from "flush-promises";
+import { createPinia } from "pinia";
+import { useHistoryStore } from "stores/historyStore";
+import { getHistoryByIdFromServer, setCurrentHistoryOnServer } from "stores/services/history.services";
+import { useUserStore } from "stores/userStore";
+import { getLocalVue } from "tests/jest/helpers";
+
+import ContentItem from "./Content/ContentItem";
+import HistoryView from "./HistoryView";
 
 const localVue = getLocalVue();
 jest.mock("stores/services/history.services");
@@ -64,9 +66,6 @@ async function createWrapper(localVue, currentUserId, history) {
     const wrapper = mount(HistoryView, {
         propsData: { id: history.id },
         localVue,
-        stubs: {
-            icon: { template: "<div></div>" },
-        },
         provide: {
             store: {
                 dispatch: jest.fn,
@@ -118,14 +117,13 @@ describe("History center panel View", () => {
         // parts of the layout that should be similar for all cases
         expectCorrectLayout(wrapper);
 
-        // all history items, make sure all show up with hids and names
-        const historyItems = wrapper.findAll(".content-item");
+        // make sure all history items show up
+        const historyItems = wrapper.findAllComponents(ContentItem);
         expect(historyItems.length).toBe(10);
         for (let i = 0; i < historyItems.length; i++) {
             const hid = historyItems.length - i;
-            const itemHeader = historyItems.at(i).find("[data-description='content item header info']");
-            const headerText = `${hid}: Dataset ${hid}`;
-            expect(itemHeader.text()).toBe(headerText);
+            expect(historyItems.at(i).props("id")).toBe(hid);
+            expect(historyItems.at(i).props("name")).toBe(`Dataset ${hid}`);
         }
     });
 

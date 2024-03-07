@@ -151,6 +151,10 @@ table.info_data_table td:nth-child(1) {
 table.info_data_table th:nth-child(1) {
     width: 25%;
 }
+table thead.thead-dark tr th[role="columnheader"] {
+    position: sticky;
+    top: 0;
+}
 
 // increase visibility of links within alert boxes
 .alert-info,
@@ -193,6 +197,10 @@ table.info_data_table th:nth-child(1) {
     border: none;
 }
 
+.btn.disabled {
+    pointer-events: unset !important;
+}
+
 // enable titles on disabled dropdown items
 .dropdown-menu {
     .dropdown-item.disabled {
@@ -213,4 +221,9 @@ table.info_data_table th:nth-child(1) {
 // show sticky elements behind dropdown-menus
 .sticky-top {
     z-index: 800;
+}
+
+// remove margin for labels with for attribute
+label[for] {
+    margin-bottom: 0;
 }

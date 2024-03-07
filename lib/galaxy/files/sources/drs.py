@@ -13,6 +13,7 @@ from . import (
     BaseFilesSource,
     FilesSourceOptions,
     FilesSourceProperties,
+    PluginKind,
 )
 
 log = logging.getLogger(__name__)
@@ -26,6 +27,7 @@ class DRSFilesSourceProperties(FilesSourceProperties, total=False):
 
 class DRSFilesSource(BaseFilesSource):
     plugin_type = "drs"
+    plugin_kind = PluginKind.drs
 
     def __init__(self, **kwd: Unpack[FilesSourceProperties]):
         kwds: FilesSourceProperties = dict(
@@ -62,8 +64,7 @@ class DRSFilesSource(BaseFilesSource):
         raise NotImplementedError()
 
     def score_url_match(self, url: str):
-        match = self._url_regex.match(url)
-        if match:
+        if match := self._url_regex.match(url):
             return match.span()[1]
         else:
             return 0

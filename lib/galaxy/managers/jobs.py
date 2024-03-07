@@ -6,6 +6,7 @@ from datetime import (
     datetime,
 )
 
+import sqlalchemy
 from boltons.iterutils import remap
 from pydantic import (
     BaseModel,
@@ -15,14 +16,18 @@ from sqlalchemy import (
     and_,
     false,
     func,
+    null,
     or_,
+    true,
 )
-from sqlalchemy.orm import aliased
+from sqlalchemy.orm import (
+    aliased,
+    Session,
+)
 from sqlalchemy.sql import select
 
 from galaxy import model
 from galaxy.exceptions import (
-    AdminRequiredException,
     ItemAccessibilityException,
     ObjectNotFound,
     RequestParameterInvalidException,
@@ -36,8 +41,15 @@ from galaxy.managers.datasets import DatasetManager
 from galaxy.managers.hdas import HDAManager
 from galaxy.managers.lddas import LDDAManager
 from galaxy.model import (
+    ImplicitCollectionJobs,
+    ImplicitCollectionJobsJobAssociation,
     Job,
     JobParameter,
+    User,
+    Workflow,
+    WorkflowInvocation,
+    WorkflowInvocationStep,
+    YIELD_PER_ROWS,
 )
 from galaxy.model.base import transaction
 from galaxy.model.index_filter_util import (
@@ -93,76 +105,56 @@ class JobManager:
         self.app = app
         self.dataset_manager = DatasetManager(app)
 
-    def index_query(self, trans, payload: JobIndexQueryPayload):
+    def index_query(self, trans, payload: JobIndexQueryPayload) -> sqlalchemy.engine.Result:
+        """The caller is responsible for security checks on the resulting job if
+        history_id, invocation_id, or implicit_collection_jobs_id is set.
+        Otherwise this will only return the user's jobs or all jobs if the requesting
+        user is acting as an admin.
+        """
         is_admin = trans.user_is_admin
         user_details = payload.user_details
-
         decoded_user_id = payload.user_id
+        history_id = payload.history_id
+        workflow_id = payload.workflow_id
+        invocation_id = payload.invocation_id
+        implicit_collection_jobs_id = payload.implicit_collection_jobs_id
+        search = payload.search
+        order_by = payload.order_by
 
-        if is_admin:
-            if decoded_user_id is not None:
-                query = trans.sa_session.query(model.Job).filter(model.Job.user_id == decoded_user_id)
-            else:
-                query = trans.sa_session.query(model.Job)
-            if user_details:
-                query = query.outerjoin(model.Job.user)
-
-        else:
-            if user_details:
-                raise AdminRequiredException("Only admins can index the jobs with user details enabled")
-            if decoded_user_id is not None and decoded_user_id != trans.user.id:
-                raise AdminRequiredException("Only admins can index the jobs of others")
-            query = trans.sa_session.query(model.Job).filter(model.Job.user_id == trans.user.id)
-
-        def build_and_apply_filters(query, objects, filter_func):
+        def build_and_apply_filters(stmt, objects, filter_func):
             if objects is not None:
                 if isinstance(objects, (str, date, datetime)):
-                    query = query.filter(filter_func(objects))
+                    stmt = stmt.where(filter_func(objects))
                 elif isinstance(objects, list):
                     t = []
                     for obj in objects:
                         t.append(filter_func(obj))
-                    query = query.filter(or_(*t))
-            return query
+                    stmt = stmt.where(or_(*t))
+            return stmt
 
-        query = build_and_apply_filters(query, payload.states, lambda s: model.Job.state == s)
-        query = build_and_apply_filters(query, payload.tool_ids, lambda t: model.Job.tool_id == t)
-        query = build_and_apply_filters(query, payload.tool_ids_like, lambda t: model.Job.tool_id.like(t))
-        query = build_and_apply_filters(query, payload.date_range_min, lambda dmin: model.Job.update_time >= dmin)
-        query = build_and_apply_filters(query, payload.date_range_max, lambda dmax: model.Job.update_time <= dmax)
-
-        history_id = payload.history_id
-        workflow_id = payload.workflow_id
-        invocation_id = payload.invocation_id
-        if history_id is not None:
-            query = query.filter(model.Job.history_id == history_id)
-        if workflow_id or invocation_id:
+        def add_workflow_jobs():
+            wfi_step = select(WorkflowInvocationStep)
             if workflow_id is not None:
                 wfi_step = (
-                    trans.sa_session.query(model.WorkflowInvocationStep)
-                    .join(model.WorkflowInvocation)
-                    .join(model.Workflow)
-                    .filter(
-                        model.Workflow.stored_workflow_id == workflow_id,
-                    )
-                    .subquery()
+                    wfi_step.join(WorkflowInvocation).join(Workflow).where(Workflow.stored_workflow_id == workflow_id)
                 )
             elif invocation_id is not None:
-                wfi_step = (
-                    trans.sa_session.query(model.WorkflowInvocationStep)
-                    .filter(model.WorkflowInvocationStep.workflow_invocation_id == invocation_id)
-                    .subquery()
-                )
-            query1 = query.join(wfi_step)
-            query2 = query.join(model.ImplicitCollectionJobsJobAssociation).join(
+                wfi_step = wfi_step.where(WorkflowInvocationStep.workflow_invocation_id == invocation_id)
+            wfi_step = wfi_step.subquery()
+
+            stmt1 = stmt.join(wfi_step)
+            stmt2 = stmt.join(ImplicitCollectionJobsJobAssociation).join(
                 wfi_step,
-                model.ImplicitCollectionJobsJobAssociation.implicit_collection_jobs_id
+                ImplicitCollectionJobsJobAssociation.implicit_collection_jobs_id
                 == wfi_step.c.implicit_collection_jobs_id,
             )
-            query = query1.union(query2)
+            # Ensure the result is models, not tuples
+            sq = stmt1.union(stmt2).subquery()
+            # SQLite won't recognize Job.foo as a valid column for the ORDER BY clause due to the UNION clause, so we'll use the subquery `columns` collection (`sq.c`).
+            # Ref: https://github.com/galaxyproject/galaxy/pull/16852#issuecomment-1804676322
+            return select(aliased(Job, sq)), sq.c
 
-        search = payload.search
-        if search:
+        def add_search_criteria(stmt):
             search_filters = {
                 "tool": "tool",
                 "t": "tool",
@@ -184,36 +176,73 @@ class JobManager:
                         "h": "handler",
                     }
                 )
+            assert search
             parsed_search = parse_filters_structured(search, search_filters)
             for term in parsed_search.terms:
                 if isinstance(term, FilteredTerm):
                     key = term.filter
                     if key == "user":
-                        query = query.filter(text_column_filter(model.User.email, term))
+                        stmt = stmt.where(text_column_filter(User.email, term))
                     elif key == "tool":
-                        query = query.filter(text_column_filter(model.Job.tool_id, term))
+                        stmt = stmt.where(text_column_filter(Job.tool_id, term))
                     elif key == "handler":
-                        query = query.filter(text_column_filter(model.Job.handler, term))
+                        stmt = stmt.where(text_column_filter(Job.handler, term))
                     elif key == "runner":
-                        query = query.filter(text_column_filter(model.Job.job_runner_name, term))
+                        stmt = stmt.where(text_column_filter(Job.job_runner_name, term))
                 elif isinstance(term, RawTextTerm):
-                    columns = [model.Job.tool_id]
+                    columns = [Job.tool_id]
                     if user_details:
-                        columns.append(model.User.email)
+                        columns.append(User.email)
                     if is_admin:
-                        columns.append(model.Job.handler)
-                        columns.append(model.Job.job_runner_name)
-                    query = query.filter(raw_text_column_filter(columns, term))
+                        columns.append(Job.handler)
+                        columns.append(Job.job_runner_name)
+                    stmt = stmt.filter(raw_text_column_filter(columns, term))
+            return stmt
 
-        if payload.order_by == JobIndexSortByEnum.create_time:
-            order_by = model.Job.create_time.desc()
+        stmt = select(Job)
+
+        if is_admin:
+            if decoded_user_id is not None:
+                stmt = stmt.where(Job.user_id == decoded_user_id)
+            if user_details:
+                stmt = stmt.outerjoin(Job.user)
         else:
-            order_by = model.Job.update_time.desc()
-        query = query.order_by(order_by)
+            if history_id is None and invocation_id is None and implicit_collection_jobs_id is None:
+                stmt = stmt.where(Job.user_id == trans.user.id)
+            # caller better check security
 
-        query = query.offset(payload.offset)
-        query = query.limit(payload.limit)
-        return query
+        stmt = build_and_apply_filters(stmt, payload.states, lambda s: model.Job.state == s)
+        stmt = build_and_apply_filters(stmt, payload.tool_ids, lambda t: model.Job.tool_id == t)
+        stmt = build_and_apply_filters(stmt, payload.tool_ids_like, lambda t: model.Job.tool_id.like(t))
+        stmt = build_and_apply_filters(stmt, payload.date_range_min, lambda dmin: model.Job.update_time >= dmin)
+        stmt = build_and_apply_filters(stmt, payload.date_range_max, lambda dmax: model.Job.update_time <= dmax)
+
+        if history_id is not None:
+            stmt = stmt.where(Job.history_id == history_id)
+
+        order_by_columns = Job
+        if workflow_id or invocation_id:
+            stmt, order_by_columns = add_workflow_jobs()
+        elif implicit_collection_jobs_id:
+            stmt = (
+                stmt.join(ImplicitCollectionJobsJobAssociation, ImplicitCollectionJobsJobAssociation.job_id == Job.id)
+                .join(
+                    ImplicitCollectionJobs,
+                    ImplicitCollectionJobs.id == ImplicitCollectionJobsJobAssociation.implicit_collection_jobs_id,
+                )
+                .where(ImplicitCollectionJobsJobAssociation.implicit_collection_jobs_id == implicit_collection_jobs_id)
+            )
+        if search:
+            stmt = add_search_criteria(stmt)
+
+        if order_by == JobIndexSortByEnum.create_time:
+            stmt = stmt.order_by(order_by_columns.create_time.desc())
+        else:
+            stmt = stmt.order_by(order_by_columns.update_time.desc())
+
+        stmt = stmt.offset(payload.offset)
+        stmt = stmt.limit(payload.limit)
+        return trans.sa_session.scalars(stmt)
 
     def job_lock(self) -> JobLock:
         return JobLock(active=self.app.job_manager.job_lock)
@@ -224,8 +253,8 @@ class JobManager:
         )
         return self.job_lock()
 
-    def get_accessible_job(self, trans, decoded_job_id):
-        job = trans.sa_session.query(trans.app.model.Job).filter(trans.app.model.Job.id == decoded_job_id).first()
+    def get_accessible_job(self, trans, decoded_job_id) -> Job:
+        job = trans.sa_session.get(Job, decoded_job_id)
         if job is None:
             raise ObjectNotFound()
         belongs_to_user = (
@@ -362,7 +391,6 @@ class JobSearch:
         )
 
         for k, v in wildcard_param_dump.items():
-            wildcard_value = None
             if v == {"__class__": "RuntimeValue"}:
                 # TODO: verify this is always None. e.g. run with runtime input input
                 v = None
@@ -371,10 +399,8 @@ class JobSearch:
                 continue
             elif k == "chromInfo" and "?.len" in v:
                 continue
-                wildcard_value = '"%?.len"'
-            if not wildcard_value:
-                value_dump = json.dumps(v, sort_keys=True)
-                wildcard_value = value_dump.replace('"id": "__id_wildcard__"', '"id": %')
+            value_dump = json.dumps(v, sort_keys=True)
+            wildcard_value = value_dump.replace('"id": "__id_wildcard__"', '"id": %')
             a = aliased(JobParameter)
             if value_dump == wildcard_value:
                 subq = subq.join(a).where(
@@ -423,7 +449,7 @@ class JobSearch:
                     query = query.add_columns(a.dataset_id)
                     used_ids.append(a.dataset_id)
                     query = query.join(a, a.job_id == model.Job.id)
-                    stmt = select([model.HistoryDatasetAssociation.id]).where(
+                    stmt = select(model.HistoryDatasetAssociation.id).where(
                         model.HistoryDatasetAssociation.id == e.history_dataset_association_id
                     )
                     # b is the HDA used for the job
@@ -572,17 +598,13 @@ class JobSearch:
                         continue
                     elif k == "chromInfo" and "?.len" in v:
                         continue
-                        wildcard_value = '"%?.len"'
-                    if not wildcard_value:
-                        wildcard_value = json.dumps(v, sort_keys=True).replace('"id": "__id_wildcard__"', '"id": %')
                     a = aliased(model.JobParameter)
                     job_parameter_conditions.append(
                         and_(model.Job.id == a.job_id, a.name == k, a.value == json.dumps(v, sort_keys=True))
                     )
             else:
                 job_parameter_conditions = [model.Job.id == job[0]]
-            query = self.sa_session.query(model.Job).filter(*job_parameter_conditions)
-            job = query.first()
+            job = get_job(self.sa_session, *job_parameter_conditions)
             if job is None:
                 continue
             n_parameters = 0
@@ -608,9 +630,9 @@ class JobSearch:
         return None
 
 
-def view_show_job(trans, job, full: bool) -> typing.Dict:
+def view_show_job(trans, job: Job, full: bool) -> typing.Dict:
     is_admin = trans.user_is_admin
-    job_dict = trans.app.security.encode_all_ids(job.to_dict("element", system_details=is_admin), True)
+    job_dict = job.to_dict("element", system_details=is_admin)
     if trans.app.config.expose_dataset_path and "command_line" not in job_dict:
         job_dict["command_line"] = job.command_line
     if full:
@@ -638,11 +660,9 @@ def invocation_job_source_iter(sa_session, invocation_id):
     join = model.WorkflowInvocationStep.table.join(model.WorkflowInvocation)
     statement = (
         select(
-            [
-                model.WorkflowInvocationStep.job_id,
-                model.WorkflowInvocationStep.implicit_collection_jobs_id,
-                model.WorkflowInvocationStep.state,
-            ]
+            model.WorkflowInvocationStep.job_id,
+            model.WorkflowInvocationStep.implicit_collection_jobs_id,
+            model.WorkflowInvocationStep.state,
         )
         .select_from(join)
         .where(model.WorkflowInvocation.id == invocation_id)
@@ -669,7 +689,7 @@ def fetch_job_states(sa_session, job_source_ids, job_source_types):
         elif job_source_type == "ImplicitCollectionJobs":
             implicit_collection_job_ids.add(job_source_id)
         elif job_source_type == "WorkflowInvocation":
-            invocation_state = sa_session.query(model.WorkflowInvocation).get(job_source_id).state
+            invocation_state = sa_session.get(model.WorkflowInvocation, job_source_id).state
             workflow_invocation_states[job_source_id] = invocation_state
             workflow_invocation_job_sources = []
             for (
@@ -692,10 +712,10 @@ def fetch_job_states(sa_session, job_source_ids, job_source_types):
     implicit_collection_jobs_summaries = {}
 
     for job_id in job_ids:
-        job_summaries[job_id] = summarize_jobs_to_dict(sa_session, sa_session.query(model.Job).get(job_id))
+        job_summaries[job_id] = summarize_jobs_to_dict(sa_session, sa_session.get(Job, job_id))
     for implicit_collection_jobs_id in implicit_collection_job_ids:
         implicit_collection_jobs_summaries[implicit_collection_jobs_id] = summarize_jobs_to_dict(
-            sa_session, sa_session.query(model.ImplicitCollectionJobs).get(implicit_collection_jobs_id)
+            sa_session, sa_session.get(model.ImplicitCollectionJobs, implicit_collection_jobs_id)
         )
 
     rval = []
@@ -813,7 +833,7 @@ def summarize_jobs_to_dict(sa_session, jobs_source):
                 model.ImplicitCollectionJobsJobAssociation.table.join(model.Job)
             )
             statement = (
-                select([model.Job.state, func.count("*")])
+                select(model.Job.state, func.count("*"))
                 .select_from(join)
                 .where(model.ImplicitCollectionJobs.id == jobs_source.id)
                 .group_by(model.Job.state)
@@ -859,18 +879,19 @@ def summarize_destination_params(trans, job):
         "Runner Job ID": job.job_runner_external_id,
         "Handler": job.handler,
     }
-    job_destination_params = job.destination_params
-    if job_destination_params:
+    if job_destination_params := job.destination_params:
         destination_params.update(job_destination_params)
     return destination_params
 
 
-def summarize_job_parameters(trans, job):
+def summarize_job_parameters(trans, job: Job):
     """Produce a dict-ified version of job parameters ready for tabular rendering.
 
     Precondition: the caller has verified the job is accessible to the user
     represented by the trans parameter.
     """
+    # More client logic here than is ideal but it is hard to reason about
+    # tool parameter types on the client relative to the server.
 
     def inputs_recursive(input_params, param_values, depth=1, upgrade_messages=None):
         if upgrade_messages is None:
@@ -880,23 +901,24 @@ def summarize_job_parameters(trans, job):
 
         for input in input_params.values():
             if input.name in param_values:
+                input_value = param_values[input.name]
                 if input.type == "repeat":
-                    for i in range(len(param_values[input.name])):
-                        rval.extend(inputs_recursive(input.inputs, param_values[input.name][i], depth=depth + 1))
+                    for i in range(len(input_value)):
+                        rval.extend(inputs_recursive(input.inputs, input_value[i], depth=depth + 1))
                 elif input.type == "section":
                     # Get the value of the current Section parameter
                     rval.append(dict(text=input.name, depth=depth))
                     rval.extend(
                         inputs_recursive(
                             input.inputs,
-                            param_values[input.name],
+                            input_value,
                             depth=depth + 1,
                             upgrade_messages=upgrade_messages.get(input.name),
                         )
                     )
                 elif input.type == "conditional":
                     try:
-                        current_case = param_values[input.name]["__current_case__"]
+                        current_case = input_value["__current_case__"]
                         is_valid = True
                     except Exception:
                         current_case = None
@@ -908,7 +930,7 @@ def summarize_job_parameters(trans, job):
                         rval.extend(
                             inputs_recursive(
                                 input.cases[current_case].inputs,
-                                param_values[input.name],
+                                input_value,
                                 depth=depth + 1,
                                 upgrade_messages=upgrade_messages.get(input.name),
                             )
@@ -927,20 +949,24 @@ def summarize_job_parameters(trans, job):
                         dict(
                             text=input.group_title(param_values),
                             depth=depth,
-                            value=f"{len(param_values[input.name])} uploaded datasets",
+                            value=f"{len(input_value)} uploaded datasets",
                         )
                     )
-                elif input.type == "data" or input.type == "data_collection":
+                elif (
+                    input.type == "data"
+                    or input.type == "data_collection"
+                    or isinstance(input_value, model.HistoryDatasetAssociation)
+                ):
                     value = []
-                    for element in listify(param_values[input.name]):
-                        encoded_id = trans.security.encode_id(element.id)
+                    for element in listify(input_value):
+                        element_id = element.id
                         if isinstance(element, model.HistoryDatasetAssociation):
                             hda = element
-                            value.append({"src": "hda", "id": encoded_id, "hid": hda.hid, "name": hda.name})
+                            value.append({"src": "hda", "id": element_id, "hid": hda.hid, "name": hda.name})
                         elif isinstance(element, model.DatasetCollectionElement):
-                            value.append({"src": "dce", "id": encoded_id, "name": element.element_identifier})
+                            value.append({"src": "dce", "id": element_id, "name": element.element_identifier})
                         elif isinstance(element, model.HistoryDatasetCollectionAssociation):
-                            value.append({"src": "hdca", "id": encoded_id, "hid": element.hid, "name": element.name})
+                            value.append({"src": "hdca", "id": element_id, "hid": element.hid, "name": element.name})
                         else:
                             raise Exception(
                                 f"Unhandled data input parameter type encountered {element.__class__.__name__}"
@@ -956,7 +982,7 @@ def summarize_job_parameters(trans, job):
                         dict(
                             text=label,
                             depth=depth,
-                            value=input.value_to_display_text(param_values[input.name]),
+                            value=input.value_to_display_text(input_value),
                             notes=upgrade_messages.get(input.name, ""),
                         )
                     )
@@ -1001,7 +1027,7 @@ def summarize_job_parameters(trans, job):
     return {
         "parameters": parameters,
         "has_parameter_errors": has_parameter_errors,
-        "outputs": summarize_job_outputs(job=job, tool=tool, params=params_objects, security=trans.security),
+        "outputs": summarize_job_outputs(job=job, tool=tool, params=params_objects),
     }
 
 
@@ -1016,7 +1042,7 @@ def get_output_name(tool, output, params):
         pass
 
 
-def summarize_job_outputs(job: model.Job, tool, params, security):
+def summarize_job_outputs(job: model.Job, tool, params):
     outputs = defaultdict(list)
     output_labels = {}
     possible_outputs = (
@@ -1036,7 +1062,30 @@ def summarize_job_outputs(job: model.Job, tool, params, security):
             outputs[output_name].append(
                 {
                     "label": label,
-                    "value": {"src": src, "id": security.encode_id(getattr(output_association, attribute))},
+                    "value": {"src": src, "id": getattr(output_association, attribute)},
                 }
             )
     return outputs
+
+
+def get_jobs_to_check_at_startup(session: Session, track_jobs_in_database: bool, config):
+    if track_jobs_in_database:
+        in_list = (Job.states.QUEUED, Job.states.RUNNING, Job.states.STOPPED)
+    else:
+        in_list = (Job.states.NEW, Job.states.QUEUED, Job.states.RUNNING)
+
+    stmt = (
+        select(Job)
+        .execution_options(yield_per=YIELD_PER_ROWS)
+        .filter(Job.state.in_(in_list) & (Job.handler == config.server_name))
+    )
+    if config.user_activation_on:
+        # Filter out the jobs of inactive users.
+        stmt = stmt.outerjoin(User).filter(or_((Job.user_id == null()), (User.active == true())))
+
+    return session.scalars(stmt)
+
+
+def get_job(session, *where_clauses):
+    stmt = select(Job).where(*where_clauses).limit(1)
+    return session.scalars(stmt).first()
