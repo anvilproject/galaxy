@@ -220,3 +220,6 @@ yarl==1.9.4 ; python_version >= "3.8" and python_version < "3.13"
 zipp==3.17.0 ; python_version >= "3.8" and python_version < "3.13"
 zipstream-new==1.1.8 ; python_version >= "3.8" and python_version < "3.13"
 zstandard==0.22.0 ; python_version >= "3.8" and python_version < "3.13"
+
+# anvil specific
+fs.anvilfs==0.2.5 ; python_version >= "3.7" and python_version < "3.13"
