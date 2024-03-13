@@ -18,7 +18,7 @@
 ARG ROOT_DIR=/galaxy
 ARG SERVER_DIR=$ROOT_DIR/server
 
-ARG STAGE1_BASE=python:3.11-slim
+ARG STAGE1_BASE=python:3.10-slim
 ARG FINAL_STAGE_BASE=$STAGE1_BASE
 ARG GALAXY_USER=galaxy
 ARG GALAXY_UID=101
@@ -52,6 +52,7 @@ RUN set -xe; \
         libc-dev \
         bzip2 \
         gcc \
+        zlib1g-dev \
     && pip install --no-cache virtualenv ansible \
     && apt-get autoremove -y && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/*
