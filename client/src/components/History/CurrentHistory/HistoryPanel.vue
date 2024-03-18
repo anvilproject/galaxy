@@ -50,7 +50,6 @@ interface Props {
     history: HistorySummary;
     filter?: string;
     canEditHistory?: boolean;
-    shouldShowControls?: boolean;
     filterable?: boolean;
     isMultiViewItem?: boolean;
 }
@@ -61,7 +60,6 @@ const props = withDefaults(defineProps<Props>(), {
     listOffset: 0,
     filter: "",
     canEditHistory: true,
-    shouldShowControls: true,
     filterable: false,
     isMultiViewItem: false,
 });
@@ -80,7 +78,7 @@ const querySelectionBreak = ref(false);
 const dragTarget = ref<EventTarget | null>(null);
 const contentItemRefs = computed(() => {
     return historyItems.value.reduce((acc: ContentItemRef, item) => {
-        acc[`item-${item.id}`] = ref(null);
+        acc[itemUniqueKey(item)] = ref(null);
         return acc;
     }, {});
 });
@@ -214,6 +212,36 @@ watch(
     }
 );
 
+function dragSameHistory() {
+    return getDragData().sameHistory;
+}
+
+function getDragData() {
+    const eventStore = useEventStore();
+    const multiple = eventStore.multipleDragData;
+    let data: HistoryItem[] | undefined;
+    let historyId: string | undefined;
+    try {
+        if (multiple) {
+            const dragData = eventStore.getDragData() as Record<string, HistoryItem>;
+            // set historyId to the first history_id in the multiple drag data
+            const firstItem = Object.values(dragData)[0];
+            if (firstItem) {
+                historyId = firstItem.history_id;
+            }
+            data = Object.values(dragData);
+        } else {
+            data = [eventStore.getDragData() as HistoryItem];
+            if (data[0]) {
+                historyId = data[0].history_id;
+            }
+        }
+    } catch (error) {
+        // this was not a valid object for this dropzone, ignore
+    }
+    return { data, sameHistory: historyId === props.history.id, multiple };
+}
+
 function getHighlight(item: HistoryItem) {
     if (unref(isLoading)) {
         return undefined;
@@ -321,45 +349,33 @@ function onOperationError(error: any) {
 }
 
 function onDragEnter(e: DragEvent) {
+    if (dragSameHistory()) {
+        return;
+    }
     dragTarget.value = e.target;
     showDropZone.value = true;
 }
 
+function onDragOver(e: DragEvent) {
+    if (dragSameHistory()) {
+        return;
+    }
+    e.preventDefault();
+}
+
 function onDragLeave(e: DragEvent) {
+    if (dragSameHistory()) {
+        return;
+    }
     if (dragTarget.value === e.target) {
         showDropZone.value = false;
     }
 }
 
-async function onDrop(evt: any) {
-    const eventStore = useEventStore();
+async function onDrop() {
     showDropZone.value = false;
-    let data: HistoryItem[] | undefined;
-    let historyId: string | undefined;
-    const multiple = eventStore.multipleDragData;
-    try {
-        if (multiple) {
-            const dragData = eventStore.getDragData() as Record<string, HistoryItem>;
-            // set historyId to the first history_id in the multiple drag data
-            const firstItem = Object.values(dragData)[0];
-            if (firstItem) {
-                historyId = firstItem.history_id;
-            }
-            data = Object.values(dragData);
-        } else {
-            data = [eventStore.getDragData() as HistoryItem];
-            if (data[0]) {
-                historyId = data[0].history_id;
-            }
-        }
-    } catch (error) {
-        // this was not a valid object for this dropzone, ignore
-    }
-
-    if (!data) {
-        return;
-    } else if (historyId === props.history.id) {
-        Toast.error("Cannot copy to the same history");
+    const { data, sameHistory, multiple } = getDragData();
+    if (!data || sameHistory) {
         return;
     }
 
@@ -405,6 +421,10 @@ function getItemKey(item: HistoryItem) {
     return item.type_id;
 }
 
+function itemUniqueKey(item: HistoryItem) {
+    return `${item.history_content_type}-${item.id}`;
+}
+
 onMounted(async () => {
     // `filterable` here indicates if this is the current history panel
     if (props.filterable && !props.filter) {
@@ -413,9 +433,11 @@ onMounted(async () => {
     await loadHistoryItems();
     // if there is a listOffset, we are coming from a collection view, so focus on item at that offset
     if (props.listOffset) {
-        const itemId = historyItems.value[props.listOffset]?.id;
-        const itemElement = contentItemRefs.value[`item-${itemId}`]?.value?.$el as HTMLElement;
-        itemElement?.focus();
+        const itemAtOffset = historyItems.value[props.listOffset];
+        if (itemAtOffset) {
+            const itemElement = contentItemRefs.value[itemUniqueKey(itemAtOffset)]?.value?.$el as HTMLElement;
+            itemElement?.focus();
+        }
     }
 });
 
@@ -427,7 +449,7 @@ function arrowNavigate(item: HistoryItem, eventKey: string) {
         nextItem = historyItems.value[historyItems.value.indexOf(item) - 1];
     }
     if (nextItem) {
-        const itemElement = contentItemRefs.value[`item-${nextItem.id}`]?.value?.$el as HTMLElement;
+        const itemElement = contentItemRefs.value[itemUniqueKey(nextItem)]?.value?.$el as HTMLElement;
         itemElement?.focus();
     }
     return nextItem;
@@ -482,7 +504,7 @@ function setItemDragstart(
                 class="history-layout d-flex flex-column w-100 h-100"
                 @drop.prevent="onDrop"
                 @dragenter.prevent="onDragEnter"
-                @dragover.prevent
+                @dragover="onDragOver"
                 @dragleave.prevent="onDragLeave">
                 <slot name="navigation" :history="history" />
 
@@ -510,13 +532,13 @@ function setItemDragstart(
                         :history="history"
                         :is-watching="isWatching"
                         :last-checked="lastCheckedTime"
-                        :show-controls="shouldShowControls"
+                        :show-controls="canEditHistory"
                         :filter-text.sync="filterText"
                         :hide-reload="isMultiViewItem"
                         @reloadContents="reloadContents" />
 
                     <HistoryOperations
-                        v-if="shouldShowControls"
+                        v-if="canEditHistory"
                         :history="history"
                         :show-selection="showSelection"
                         :expanded-count="expandedCount"
@@ -586,7 +608,7 @@ function setItemDragstart(
                             <template v-slot:item="{ item, currentOffset }">
                                 <ContentItem
                                     :id="item.hid"
-                                    :ref="contentItemRefs[`item-${item.id}`]"
+                                    :ref="contentItemRefs[itemUniqueKey(item)]"
                                     is-history-item
                                     :item="item"
                                     :name="item.name"

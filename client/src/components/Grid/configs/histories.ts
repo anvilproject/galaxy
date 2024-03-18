@@ -32,6 +32,7 @@ type SortKeyLiteral = "create_time" | "name" | "update_time" | undefined;
  */
 async function getData(offset: number, limit: number, search: string, sort_by: string, sort_desc: boolean) {
     const { data, headers } = await historiesFetcher({
+        view: "summary",
         limit,
         offset,
         search,
@@ -241,7 +242,7 @@ const fields: FieldArray = [
         ],
     },
     {
-        key: "hid_counter",
+        key: "count",
         title: "Items",
         type: "text",
     },

@@ -37,6 +37,8 @@ interface Props {
     embedded?: boolean;
     // rows per page to be shown
     limit?: number;
+    // username for initial search
+    usernameSearch?: string;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -213,6 +215,11 @@ function onSelectAll(current: boolean): void {
  * Initialize grid data
  */
 onMounted(() => {
+    if (props.usernameSearch) {
+        const search_query = `user:${props.usernameSearch}`.trim();
+        filterText.value = search_query;
+        onSearch(search_query);
+    }
     getGridData();
     eventBus.on(onRouterPush);
     displayInitialMessage();
@@ -356,7 +363,7 @@ watch(operationMessage, () => {
         </table>
         <div class="flex-grow-1 h-100" />
         <div class="grid-footer">
-            <div v-if="isAvailable && gridConfig.batch" class="d-flex justify-content-between pt-3">
+            <div v-if="isAvailable" class="d-flex justify-content-between pt-3">
                 <div class="d-flex">
                     <div v-for="(batchOperation, batchIndex) in gridConfig.batch" :key="batchIndex">
                         <BButton
@@ -376,9 +383,6 @@ watch(operationMessage, () => {
                 </div>
                 <BPagination v-model="currentPage" :total-rows="totalRows" :per-page="limit" class="m-0" size="sm" />
             </div>
-            <div v-else-if="isAvailable" class="d-flex justify-content-center pt-3">
-                <BPagination v-model="currentPage" :total-rows="totalRows" :per-page="limit" class="m-0" size="sm" />
-            </div>
         </div>
     </div>
 </template>
@@ -395,6 +399,7 @@ watch(operationMessage, () => {
     top: 0;
 }
 .grid-sticky {
+    left: 0;
     z-index: 2;
     background: $white;
     opacity: 0.95;
