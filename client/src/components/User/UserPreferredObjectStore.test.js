@@ -1,12 +1,16 @@
-import { setupSelectableMock } from "../ObjectStore/mockServices";
-setupSelectableMock();
-
 import { mount } from "@vue/test-utils";
-import { getLocalVue } from "tests/jest/helpers";
 import axios from "axios";
 import MockAdapter from "axios-mock-adapter";
 import flushPromises from "flush-promises";
+import { getLocalVue } from "tests/jest/helpers";
+
+import { ROOT_COMPONENT } from "@/utils/navigation";
+
+import { setupSelectableMock } from "../ObjectStore/mockServices";
+
 import UserPreferredObjectStore from "./UserPreferredObjectStore.vue";
+
+setupSelectableMock();
 
 const localVue = getLocalVue(true);
 
@@ -20,8 +24,6 @@ function mountComponent() {
     });
     return wrapper;
 }
-
-import { ROOT_COMPONENT } from "@/utils/navigation";
 
 describe("UserPreferredObjectStore.vue", () => {
     let axiosMock;
@@ -38,7 +40,7 @@ describe("UserPreferredObjectStore.vue", () => {
         const wrapper = mountComponent();
         expect(wrapper.vm.$refs["modal"].isHidden).toBeTruthy();
         const el = await wrapper.find(ROOT_COMPONENT.preferences.object_store.selector);
-        expect(el.text()).toBeLocalizationOf("Preferred Object Store");
+        expect(el.text()).toBeLocalizationOf("Preferred Storage Location");
         await el.trigger("click");
         expect(wrapper.vm.$refs["modal"].isHidden).toBeFalsy();
     });

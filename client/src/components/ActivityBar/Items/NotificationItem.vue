@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed } from "vue";
 import { storeToRefs } from "pinia";
+import { computed } from "vue";
+
 import { useNotificationsStore } from "@/stores/notificationsStore";
+
 import ActivityItem from "components/ActivityBar/ActivityItem.vue";
 
 const { totalUnreadCount } = storeToRefs(useNotificationsStore());
@@ -11,7 +13,6 @@ export interface Props {
     title: string;
     icon: string;
     isActive: boolean;
-    to: string;
 }
 
 defineProps<Props>();
@@ -35,6 +36,5 @@ const tooltip = computed(() =>
         :is-active="isActive"
         :title="title"
         :tooltip="tooltip"
-        :to="to"
         @click="emit('click')" />
 </template>

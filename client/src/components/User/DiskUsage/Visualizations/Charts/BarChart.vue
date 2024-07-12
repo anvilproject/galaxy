@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { BCard } from "bootstrap-vue";
-import { computed, onMounted, ref, watch } from "vue";
 import * as d3 from "d3";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
+
 import type { DataValuePoint } from ".";
 
 interface BarChartProps {
@@ -62,8 +63,14 @@ watch(
         props.valueFormatter,
     ],
     () => {
-        clearChart();
-        renderBarChart();
+        // make sure v-if to conditionally display the div we're rendering this in
+        // is available in the DOM before actually doing the rendering. Without
+        // nextTick you cannot go from empty data -> chart when tweaking filtering
+        // parameters.
+        nextTick(() => {
+            clearChart();
+            renderBarChart();
+        });
     }
 );
 
@@ -304,7 +311,7 @@ function setTooltipPosition(mouseX: number, mouseY: number): void {
 </script>
 
 <template>
-    <b-card class="mb-3">
+    <BCard class="mb-3">
         <template v-slot:header>
             <h3 class="text-center my-1">
                 <slot name="title">
@@ -312,6 +319,7 @@ function setTooltipPosition(mouseX: number, mouseY: number): void {
                 </slot>
             </h3>
         </template>
+        <slot name="options" />
         <div v-if="hasData">
             <p class="chart-description">{{ description }}</p>
             <div class="chart-area">
@@ -332,7 +340,7 @@ function setTooltipPosition(mouseX: number, mouseY: number): void {
                 <div>{{ labelFormatter(tooltipDataPoint) }}</div>
             </slot>
         </div>
-    </b-card>
+    </BCard>
 </template>
 
 <style lang="scss" scoped>

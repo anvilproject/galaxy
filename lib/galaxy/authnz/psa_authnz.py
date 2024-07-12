@@ -3,7 +3,6 @@ import logging
 import time
 
 import jwt
-import requests
 from msal import ConfidentialClientApplication
 from social_core.actions import (
     do_auth,
@@ -27,7 +26,10 @@ from galaxy.model import (
     UserAuthnzToken,
 )
 from galaxy.model.base import transaction
-from galaxy.util import DEFAULT_SOCKET_TIMEOUT
+from galaxy.util import (
+    DEFAULT_SOCKET_TIMEOUT,
+    requests,
+)
 from . import IdentityProvider
 
 log = logging.getLogger(__name__)
@@ -42,6 +44,7 @@ BACKENDS = {
     "elixir": "social_core.backends.elixir.ElixirOpenIdConnect",
     "okta": "social_core.backends.okta_openidconnect.OktaOpenIdConnect",
     "azure": "social_core.backends.azuread_tenant.AzureADV2TenantOAuth2",
+    "egi_checkin": "social_core.backends.egi_checkin.EGICheckinOpenIdConnect",
 }
 
 BACKENDS_NAME = {
@@ -50,6 +53,7 @@ BACKENDS_NAME = {
     "elixir": "elixir",
     "okta": "okta-openidconnect",
     "azure": "azuread-v2-tenant-oauth2",
+    "egi_checkin": "egi-checkin",
 }
 
 AUTH_PIPELINE = (

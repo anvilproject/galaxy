@@ -1,13 +1,15 @@
 import { formatDistanceToNow, parseISO } from "date-fns";
-import type { components } from "@/schema";
+
+import type { components } from "@/api/schema";
 
 type ExportObjectRequestMetadata = components["schemas"]["ExportObjectRequestMetadata"];
 
 export type StoreExportPayload = components["schemas"]["StoreExportPayload"];
+export type ModelStoreFormat = components["schemas"]["ModelStoreFormat"];
 export type ObjectExportTaskResponse = components["schemas"]["ObjectExportTaskResponse"];
 
 export interface ExportParams {
-    readonly modelStoreFormat: string;
+    readonly modelStoreFormat: ModelStoreFormat;
     readonly includeFiles: boolean;
     readonly includeDeleted: boolean;
     readonly includeHidden: boolean;
@@ -27,15 +29,15 @@ export interface ExportRecord {
     readonly stsDownloadId?: string;
     readonly isStsDownload: boolean;
     readonly canDownload: boolean;
-    readonly modelStoreFormat: string;
+    readonly modelStoreFormat: ModelStoreFormat;
     readonly exportParams?: ExportParams;
-    readonly duration?: number;
+    readonly duration?: number | null;
     readonly canExpire: boolean;
     readonly isPermanent: boolean;
     readonly expirationDate?: Date;
     readonly expirationElapsedTime?: string;
     readonly hasExpired: boolean;
-    readonly errorMessage?: string;
+    readonly errorMessage?: string | null;
 }
 
 export class ExportParamsModel implements ExportParams {
@@ -60,17 +62,24 @@ export class ExportParamsModel implements ExportParams {
         return Boolean(this._params?.include_hidden);
     }
 
-    public equals(otherExportParams?: ExportParamsModel) {
+    public equals(otherExportParams?: ExportParams) {
         if (!otherExportParams) {
             return false;
         }
-        return (
-            this.modelStoreFormat === otherExportParams.modelStoreFormat &&
-            this.includeFiles === otherExportParams.includeFiles &&
-            this.includeDeleted === otherExportParams.includeDeleted &&
-            this.includeHidden === otherExportParams.includeHidden
-        );
+        return areEqual(this, otherExportParams);
     }
+}
+
+export function areEqual(params1?: ExportParams, params2?: ExportParams): boolean {
+    if (!params1 || !params2) {
+        return false;
+    }
+    return (
+        params1.modelStoreFormat === params2.modelStoreFormat &&
+        params1.includeFiles === params2.includeFiles &&
+        params1.includeDeleted === params2.includeDeleted &&
+        params1.includeHidden === params2.includeHidden
+    );
 }
 
 export class ExportRecordModel implements ExportRecord {

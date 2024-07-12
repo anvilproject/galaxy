@@ -95,6 +95,7 @@ class TagHandler:
         if flush:
             with transaction(self.sa_session):
                 self.sa_session.commit()
+        item.update()
         return item.tags
 
     def get_tag_assoc_class(self, item_class):
@@ -113,19 +114,17 @@ class TagHandler:
         if not item_tag_assoc_class:
             return []
         # Build select statement.
-        cols_to_select = [item_tag_assoc_class.table.c.tag_id, func.count("*")]
         from_obj = item_tag_assoc_class.table.join(item_class.table).join(galaxy.model.Tag.table)
         where_clause = self.get_id_col_in_item_tag_assoc_table(item_class) == item.id
-        order_by = [func.count("*").desc()]
         group_by = item_tag_assoc_class.table.c.tag_id
         # Do query and get result set.
-        query = select(
-            columns=cols_to_select,
-            from_obj=from_obj,
-            whereclause=where_clause,
-            group_by=group_by,
-            order_by=order_by,
-            limit=limit,
+        query = (
+            select(item_tag_assoc_class.table.c.tag_id, func.count())
+            .select_from(from_obj)
+            .where(where_clause)
+            .group_by(group_by)
+            .order_by(func.count().desc())
+            .limit(limit)
         )
         result_set = self.sa_session.execute(query)
         # Return community tags.
@@ -136,9 +135,7 @@ class TagHandler:
         return community_tags
 
     def get_tool_tags(self):
-        query = select(
-            columns=[galaxy.model.ToolTagAssociation.table.c.tag_id], from_obj=galaxy.model.ToolTagAssociation.table
-        ).distinct()
+        query = select(galaxy.model.ToolTagAssociation.table.c.tag_id).distinct()
         result_set = self.sa_session.execute(query)
 
         tags = []
@@ -151,9 +148,8 @@ class TagHandler:
         """Remove a tag from an item."""
         self._ensure_user_owns_item(user, item)
         # Get item tag association.
-        item_tag_assoc = self._get_item_tag_assoc(user, item, tag_name)
         # Remove association.
-        if item_tag_assoc:
+        if item_tag_assoc := self._get_item_tag_assoc(user, item, tag_name):
             # Delete association.
             self.sa_session.delete(item_tag_assoc)
             item.tags.remove(item_tag_assoc)
@@ -199,6 +195,7 @@ class TagHandler:
     def item_has_tag(self, user, item, tag):
         """Returns true if item is has a given tag."""
         # Get tag name.
+        tag_name = None
         if isinstance(tag, str):
             tag_name = tag
         elif isinstance(tag, galaxy.model.Tag):
@@ -291,16 +288,23 @@ class TagHandler:
 
     def get_tag_by_id(self, tag_id):
         """Get a Tag object from a tag id."""
-        return self.sa_session.query(galaxy.model.Tag).filter_by(id=tag_id).first()
+        return self.sa_session.get(galaxy.model.Tag, tag_id)
 
     def get_tag_by_name(self, tag_name):
         """Get a Tag object from a tag name (string)."""
         if tag_name:
-            return self.sa_session.query(galaxy.model.Tag).filter_by(name=tag_name.lower()).first()
+            return self.sa_session.scalars(select(galaxy.model.Tag).filter_by(name=tag_name.lower()).limit(1)).first()
         return None
 
     def _create_tag(self, tag_str: str):
-        """Create a Tag object from a tag string."""
+        """
+        Create or retrieve one or more Tag objects from a tag string. If there are multiple
+        hierarchical tags in the tag string, the string will be split along `self.hierarchy_separator` chars.
+        A Tag instance will be created for each non-empty prefix. If a prefix corresponds to the
+        name of an existing tag, that tag will be retrieved; otherwise, a new Tag object will be created.
+        For example, for the tag string `a.b.c` 3 Tag instances will be created: `a`, `a.b`, `a.b.c`.
+        Return the last tag created (`a.b.c`).
+        """
         tag_hierarchy = tag_str.split(self.hierarchy_separator)
         tag_prefix = ""
         parent_tag = None
@@ -321,7 +325,7 @@ class TagHandler:
         return tag
 
     def _get_tag(self, tag_name):
-        return self.sa_session.query(galaxy.model.Tag).filter_by(name=tag_name).first()
+        return self.sa_session.scalars(select(galaxy.model.Tag).filter_by(name=tag_name).limit(1)).first()
 
     def _create_tag_instance(self, tag_name):
         # For good performance caller should first check if there's already an appropriate tag
@@ -374,7 +378,7 @@ class TagHandler:
         """
         # Gracefully handle None.
         if not tag_str:
-            return dict()
+            return {}
         # Strip unicode control characters
         tag_str = strip_control_characters(tag_str)
         # Split tags based on separators.
@@ -428,7 +432,7 @@ class TagHandler:
 
     def _scrub_tag_name_list(self, tag_name_list):
         """Scrub a tag name list."""
-        scrubbed_tag_list = list()
+        scrubbed_tag_list = []
         for tag in tag_name_list:
             scrubbed_tag_list.append(self._scrub_tag_name(tag))
         return scrubbed_tag_list

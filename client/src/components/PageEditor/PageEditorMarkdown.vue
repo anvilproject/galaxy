@@ -1,6 +1,25 @@
 <template>
-    <markdown-editor :title="title" :markdown-text="markdownText" :markdown-config="contentData" @onUpdate="onUpdate">
+    <MarkdownEditor
+        :title="title"
+        :markdown-text="markdownText"
+        :markdown-config="contentData"
+        mode="page"
+        @onUpdate="onUpdate">
         <template v-slot:buttons>
+            <ObjectPermissionsModal
+                id="object-permissions-modal"
+                v-model="showPermissions"
+                :markdown-content="markdownText" />
+            <b-button
+                id="permissions-button"
+                v-b-tooltip.hover.bottom
+                v-b-modal:object-permissions-modal
+                title="Permissions"
+                variant="link"
+                role="button"
+                @click="showPermissions = true">
+                <FontAwesomeIcon icon="users" />
+            </b-button>
             <b-button
                 id="save-button"
                 v-b-tooltip.hover.bottom
@@ -8,7 +27,7 @@
                 variant="link"
                 role="button"
                 @click="saveContent(false)">
-                <font-awesome-icon icon="save" />
+                <FontAwesomeIcon icon="save" />
             </b-button>
             <b-button
                 id="view-button"
@@ -17,30 +36,34 @@
                 variant="link"
                 role="button"
                 @click="saveContent(true)">
-                <font-awesome-icon icon="eye" />
+                <FontAwesomeIcon icon="eye" />
             </b-button>
         </template>
-    </markdown-editor>
+    </MarkdownEditor>
 </template>
 
 <script>
-import Vue from "vue";
-import BootstrapVue from "bootstrap-vue";
-import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
 import { library } from "@fortawesome/fontawesome-svg-core";
-import { faEye, faSave } from "@fortawesome/free-solid-svg-icons";
+import { faEye, faSave, faUsers } from "@fortawesome/free-solid-svg-icons";
+import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
+import BootstrapVue from "bootstrap-vue";
 import MarkdownEditor from "components/Markdown/MarkdownEditor";
 import { Toast } from "composables/toast";
+import Vue from "vue";
+
 import { save } from "./util";
+
+import ObjectPermissionsModal from "./ObjectPermissionsModal.vue";
 
 Vue.use(BootstrapVue);
 
-library.add(faEye, faSave);
+library.add(faEye, faSave, faUsers);
 
 export default {
     components: {
         MarkdownEditor,
         FontAwesomeIcon,
+        ObjectPermissionsModal,
     },
     props: {
         pageId: {
@@ -67,6 +90,7 @@ export default {
     data: function () {
         return {
             markdownText: this.content,
+            showPermissions: false,
         };
     },
     methods: {

@@ -2,6 +2,7 @@
 
 More information on Pulsar can be found at https://pulsar.readthedocs.io/ .
 """
+
 import copy
 import errno
 import logging
@@ -36,6 +37,7 @@ from pulsar.client import (
 
 # TODO: Perform pulsar release with this included in the client package
 from pulsar.client.staging import DEFAULT_DYNAMIC_COLLECTION_PATTERN
+from sqlalchemy import select
 
 from galaxy import model
 from galaxy.job_execution.compute_environment import (
@@ -49,11 +51,13 @@ from galaxy.jobs.runners import (
     AsynchronousJobState,
     JobState,
 )
+from galaxy.model.base import check_database_connection
 from galaxy.tool_util.deps import dependencies
 from galaxy.util import (
     galaxy_directory,
     specs,
     string_as_bool_or_none,
+    unicodify,
 )
 
 log = logging.getLogger(__name__)
@@ -319,7 +323,12 @@ class PulsarJobRunner(AsynchronousJobRunner):
 
     def _update_job_state_for_status(self, job_state, pulsar_status, full_status=None):
         log.debug("(%s) Received status update: %s", job_state.job_id, pulsar_status)
-        if pulsar_status in ["complete", "cancelled"] or job_state.job_wrapper.get_state() == model.Job.states.STOPPED:
+        if pulsar_status in ["complete", "cancelled"]:
+            self.mark_as_finished(job_state)
+            return None
+        if job_state.job_wrapper.get_state() == model.Job.states.STOPPED:
+            client = self.get_client_from_state(job_state)
+            client.kill()
             self.mark_as_finished(job_state)
             return None
         if pulsar_status in ["failed", "lost"]:
@@ -598,8 +607,7 @@ class PulsarJobRunner(AsynchronousJobRunner):
         if hasattr(job_wrapper, "task_id"):
             job_id = f"{job_id}_{job_wrapper.task_id}"
         params = job_wrapper.job_destination.params.copy()
-        user = job_wrapper.get_job().user
-        if user:
+        if user := job_wrapper.get_job().user:
             for key, value in params.items():
                 if value and isinstance(value, str):
                     params[key] = model.User.expand_user_properties(user, value)
@@ -642,8 +650,8 @@ class PulsarJobRunner(AsynchronousJobRunner):
             client = self.get_client_from_state(job_state)
             run_results = client.full_status()
             remote_metadata_directory = run_results.get("metadata_directory", None)
-            tool_stdout = run_results.get("stdout", "")
-            tool_stderr = run_results.get("stderr", "")
+            tool_stdout = unicodify(run_results.get("stdout", ""), strip_null=True)
+            tool_stderr = unicodify(run_results.get("stderr", ""), strip_null=True)
             job_stdout = run_results.get("job_stdout")
             job_stderr = run_results.get("job_stderr")
             exit_code = run_results.get("returncode")
@@ -971,13 +979,12 @@ class PulsarJobRunner(AsynchronousJobRunner):
         galaxy_job_id = None
         remote_job_id = None
         try:
+            check_database_connection(self.sa_session)
             remote_job_id = full_status["job_id"]
             if len(remote_job_id) == 32:
                 # It is a UUID - assign_ids = uuid in destination params...
-                sa_session = self.app.model.session
-                galaxy_job_id = (
-                    sa_session.query(model.Job).filter(model.Job.job_runner_external_id == remote_job_id).one().id
-                )
+                stmt = select(model.Job.id).filter(model.Job.job_runner_external_id == remote_job_id)
+                galaxy_job_id = self.app.model.session.execute(stmt).scalar_one()
             else:
                 galaxy_job_id = remote_job_id
             job, job_wrapper = self.app.job_manager.job_handler.job_queue.job_pair_for_id(galaxy_job_id)
@@ -1123,7 +1130,7 @@ class PulsarComputeEnvironment(ComputeEnvironment):
         if local_input_path_rewrite is not None:
             local_input_path = local_input_path_rewrite
         else:
-            local_input_path = dataset.file_name
+            local_input_path = dataset.get_file_name()
         remote_path = self.path_mapper.remote_input_path_rewrite(local_input_path)
         return remote_path
 
@@ -1132,7 +1139,7 @@ class PulsarComputeEnvironment(ComputeEnvironment):
         if local_output_path_rewrite is not None:
             local_output_path = local_output_path_rewrite
         else:
-            local_output_path = dataset.file_name
+            local_output_path = dataset.get_file_name()
         remote_path = self.path_mapper.remote_output_path_rewrite(local_output_path)
         return remote_path
 

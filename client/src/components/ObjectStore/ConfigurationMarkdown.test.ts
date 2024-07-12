@@ -1,5 +1,6 @@
 import { shallowMount } from "@vue/test-utils";
 import { getLocalVue } from "tests/jest/helpers";
+
 import ConfigurationMarkdown from "./ConfigurationMarkdown.vue";
 
 const localVue = getLocalVue();
@@ -15,7 +16,7 @@ describe("ConfigurationMarkdown.vue", () => {
         expect(wrapper.html()).toContain("<em>content</em>");
     });
 
-    it("should allow HTML in configuration markdup explicitly set by the admin", () => {
+    it("should allow HTML in configuration markup explicitly set by the admin", () => {
         wrapper = shallowMount(ConfigurationMarkdown, {
             propsData: { markdown: "the <b>content</b>", admin: true },
             localVue,

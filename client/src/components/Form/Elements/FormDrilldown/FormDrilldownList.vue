@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import FormDrilldownOption from "./FormDrilldownOption.vue";
 import type { Option } from "./utilities";
+
+import FormDrilldownOption from "./FormDrilldownOption.vue";
 
 defineProps<{
     currentValue: string[];
@@ -11,9 +12,9 @@ defineProps<{
 </script>
 
 <template>
-    <div>
-        <div v-for="option in options" :key="option.name" class="ui-drilldown">
-            <form-drilldown-option
+    <div class="ui-drilldown">
+        <div v-for="option in options" :key="option.name" class="descendant-lines">
+            <FormDrilldownOption
                 :current-value="currentValue"
                 :handle-click="handleClick"
                 :multiple="multiple"
@@ -21,3 +22,15 @@ defineProps<{
         </div>
     </div>
 </template>
+
+<style lang="scss" scoped>
+@import "theme/blue.scss";
+.ui-drilldown {
+    $ui-drilldown-border: 0.5px solid $gray-500;
+
+    /* selector: all except first nested drilldown */
+    & > * .descendant-lines {
+        border-left: $ui-drilldown-border;
+    }
+}
+</style>

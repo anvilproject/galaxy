@@ -35,7 +35,7 @@ NOT_IMPLEMENTED_MESSAGE = "Galaxy tool format does not yet support this tool fea
 class AssertionDict(TypedDict):
     tag: str
     attributes: Dict[str, Any]
-    children: Optional[List[Dict[str, Any]]]
+    children: "AssertionList"
 
 
 AssertionList = Optional[List[AssertionDict]]
@@ -424,6 +424,9 @@ class InputSource(metaclass=ABCMeta):
 
     def parse_when_input_sources(self):
         raise NotImplementedError(NOT_IMPLEMENTED_MESSAGE)
+
+    def parse_default(self) -> Optional[Dict[str, Any]]:
+        return None
 
 
 class PageSource(metaclass=ABCMeta):

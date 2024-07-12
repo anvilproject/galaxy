@@ -126,6 +126,14 @@ class AbstractToolTagManager(metaclass=abc.ABCMeta):
         """Parse out tags and persist them."""
 
 
+class NullToolTagManager(AbstractToolTagManager):
+    def reset_tags(self) -> None:
+        return None
+
+    def handle_tags(self, tool_id, tool_definition_source) -> None:
+        return None
+
+
 class AbstractToolBox(Dictifiable, ManagesIntegratedToolPanelMixin):
     """
     Abstract container for managing a ToolPanel - containing tools and
@@ -148,7 +156,7 @@ class AbstractToolBox(Dictifiable, ManagesIntegratedToolPanelMixin):
         Create a toolbox from the config files named by `config_filenames`, using
         `tool_root_dir` as the base directory for finding individual tool config files.
         """
-        self._default_panel_view = default_panel_view
+        self.__default_panel_view = default_panel_view
         # The _dynamic_tool_confs list contains dictionaries storing
         # information about the tools defined in each shed-related
         # shed_tool_conf.xml file.
@@ -230,6 +238,14 @@ class AbstractToolBox(Dictifiable, ManagesIntegratedToolPanelMixin):
         if save_integrated_tool_panel:
             self._save_integrated_tool_panel()
 
+    def _default_panel_view(self, trans):
+        config = self.app.config
+        if hasattr(config, "config_value_for_host"):
+            config_value = config.config_value_for_host("default_panel_view", trans.host)
+        else:
+            config_value = getattr(config, "default_panel_view", None)
+        return config_value or self.__default_panel_view
+
     def create_tool(self, config_file, tool_shed_repository=None, guid=None, **kwds):
         raise NotImplementedError()
 
@@ -253,14 +269,14 @@ class AbstractToolBox(Dictifiable, ManagesIntegratedToolPanelMixin):
         execution_timer = ExecutionTimer()
         self._tool_tag_manager.reset_tags()
         config_filenames = listify(config_filenames)
-        for config_filename in config_filenames:
-            if os.path.isdir(config_filename):
-                directory_contents = sorted(os.listdir(config_filename))
-                directory_config_files = [
-                    config_file for config_file in directory_contents if config_file.endswith(".xml")
-                ]
-                config_filenames.remove(config_filename)
-                config_filenames.extend(directory_config_files)
+        config_directories = [config_filename for config_filename in config_filenames if os.path.isdir(config_filename)]
+        config_filenames = [
+            config_filename for config_filename in config_filenames if config_filename not in config_directories
+        ]
+        for config_directory in config_directories:
+            directory_contents = sorted(os.listdir(config_directory))
+            directory_config_files = [config_file for config_file in directory_contents if config_file.endswith(".xml")]
+            config_filenames.extend(directory_config_files)
         for config_filename in config_filenames:
             if not self.can_load_config_file(config_filename):
                 continue
@@ -367,7 +383,7 @@ class AbstractToolBox(Dictifiable, ManagesIntegratedToolPanelMixin):
         return [v.to_model() for v in self._tool_panel_views.values()]
 
     def panel_view_dicts(self) -> Dict[str, Dict]:
-        return {m.id: m.dict() for m in self.panel_views()}
+        return {m.id: m.model_dump(mode="json") for m in self.panel_views()}
 
     def panel_has_tool(self, tool, panel_view_id):
         panel_view_rendered = self._tool_panel_view_rendered[panel_view_id]
@@ -653,6 +669,9 @@ class AbstractToolBox(Dictifiable, ManagesIntegratedToolPanelMixin):
                 section = ToolSection(elem)
                 for section_elem in elem:
                     section_id = section_elem.get("id")
+                    assert (
+                        section_id
+                    ), f"Element '{etree.tostring(section_elem, encoding='unicode')}' did not specify 'id' attribute"
                     if section_elem.tag == "tool":
                         section.elems.stub_tool(section_id)
                     elif section_elem.tag == "workflow":
@@ -752,9 +771,6 @@ class AbstractToolBox(Dictifiable, ManagesIntegratedToolPanelMixin):
 
     def is_missing_shed_tool(self, tool_id: str) -> bool:
         """Confirm that the tool ID does reference a shed tool and is not installed."""
-        if tool_id is None:
-            # This is not a tool ID.
-            return False
         if "repos" not in tool_id:
             # This is not a shed tool.
             return False
@@ -1267,7 +1283,7 @@ class AbstractToolBox(Dictifiable, ManagesIntegratedToolPanelMixin):
     def tool_panel_contents(self, trans, view=None, **kwds):
         """Filter tool_panel contents for displaying for user."""
         if view is None:
-            view = self._default_panel_view
+            view = self._default_panel_view(trans)
         if view not in self._tool_panel_view_rendered:
             raise RequestParameterInvalidException(f"No panel view {view} found.")
         filter_method = self._build_filter_method(trans)
@@ -1323,6 +1339,25 @@ class AbstractToolBox(Dictifiable, ManagesIntegratedToolPanelMixin):
                 rval.append(self.get_tool_to_dict(trans, tool, tool_help=tool_help))
         return rval
 
+    def to_panel_view(self, trans, view="default_panel_view", **kwds):
+        """
+        Create a panel view representation of the toolbox.
+        Uses the structure:
+            {section_id: { section but with .tools=List[all tool ids] }, ...}}
+        """
+        if view == "default_panel_view":
+            view = self._default_panel_view(trans)
+        view_contents: Dict[str, Dict] = {}
+        panel_elts = self.tool_panel_contents(trans, view=view, **kwds)
+        for elt in panel_elts:
+            # Only use cache for objects that are Tools.
+            if hasattr(elt, "tool_type"):
+                view_contents[elt.id] = self.get_tool_to_dict(trans, elt, tool_help=False)
+            else:
+                kwargs = dict(trans=trans, link_details=True, tool_help=False, toolbox=self, only_ids=True)
+                view_contents[elt.id] = elt.to_dict(**kwargs)
+        return view_contents
+
     def _lineage_in_panel(self, panel_dict, tool=None, tool_lineage=None):
         """If tool with same lineage already in panel (or section) - find
         and return it. Otherwise return None.
@@ -1359,8 +1394,7 @@ class AbstractToolBox(Dictifiable, ManagesIntegratedToolPanelMixin):
         return lambda element, item_type: _filter_for_panel(element, item_type, filters, context)
 
     @abc.abstractmethod
-    def _looks_like_a_tool(self, path: str) -> bool:
-        ...
+    def _looks_like_a_tool(self, path: str) -> bool: ...
 
 
 def _filter_for_panel(item, item_type, filters, context):

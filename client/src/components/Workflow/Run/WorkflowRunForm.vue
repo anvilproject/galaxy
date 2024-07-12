@@ -1,11 +1,18 @@
 <template>
     <div v-if="currentUser && currentHistoryId" class="workflow-expanded-form">
+        <BAlert v-if="!canRunOnHistory" variant="warning" show>
+            <span v-localize>
+                The workflow cannot run because the current history is immutable. Please select a different history or
+                send the results to a new one.
+            </span>
+        </BAlert>
         <div class="h4 clearfix mb-3">
-            <b>Workflow: {{ model.name }}</b>
+            <b>Workflow: {{ model.name }}</b> <i>(version: {{ model.runData.version + 1 }})</i>
             <ButtonSpinner
                 id="run-workflow"
                 class="float-right"
                 title="Run Workflow"
+                :disabled="!canRunOnHistory"
                 :wait="showExecuting"
                 @onClick="onExecute" />
         </div>
@@ -53,21 +60,25 @@
 </template>
 
 <script>
-import { mapState } from "pinia";
-import { useUserStore } from "@/stores/userStore";
-import { useHistoryStore } from "@/stores/historyStore";
+import { BAlert } from "bootstrap-vue";
 import ButtonSpinner from "components/Common/ButtonSpinner";
-import FormDisplay from "components/Form/FormDisplay";
 import FormCard from "components/Form/FormCard";
+import FormDisplay from "components/Form/FormDisplay";
 import FormElement from "components/Form/FormElement";
-import WorkflowRunDefaultStep from "./WorkflowRunDefaultStep";
-import WorkflowRunInputStep from "./WorkflowRunInputStep";
 import { allowCachedJobs } from "components/Tool/utilities";
+import { mapState } from "pinia";
+
+import { useHistoryStore } from "@/stores/historyStore";
+import { useUserStore } from "@/stores/userStore";
+
 import { getReplacements } from "./model";
 import { invokeWorkflow } from "./services";
+import WorkflowRunDefaultStep from "./WorkflowRunDefaultStep";
+import WorkflowRunInputStep from "./WorkflowRunInputStep";
 
 export default {
     components: {
+        BAlert,
         ButtonSpinner,
         FormDisplay,
         FormCard,
@@ -78,6 +89,10 @@ export default {
     props: {
         model: {
             type: Object,
+            required: true,
+        },
+        canMutateCurrentHistory: {
+            type: Boolean,
             required: true,
         },
     },
@@ -137,6 +152,12 @@ export default {
         },
         wpInputs() {
             return this.toArray(this.model.wpInputs);
+        },
+        shouldRunOnNewHistory() {
+            return Boolean(this.historyData["new_history|name"]);
+        },
+        canRunOnHistory() {
+            return this.shouldRunOnNewHistory || this.canMutateCurrentHistory;
         },
     },
     methods: {
@@ -210,6 +231,7 @@ export default {
                 // the user is already warned if tool versions are wrong,
                 // they can still choose to invoke the workflow anyway.
                 require_exact_tool_versions: false,
+                version: this.model.runData.version,
             };
 
             console.debug("WorkflowRunForm::onExecute()", "Ready for submission.", jobDef);

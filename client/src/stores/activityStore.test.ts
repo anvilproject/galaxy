@@ -1,10 +1,12 @@
-import { setActivePinia, createPinia } from "pinia";
+import { createPinia, setActivePinia } from "pinia";
+
 import { useActivityStore } from "@/stores/activityStore";
 
 // mock Galaxy object
 jest.mock("./activitySetup", () => ({
     Activities: [
         {
+            anonymous: false,
             description: "a-description",
             icon: "a-icon",
             id: "a-id",
@@ -20,6 +22,7 @@ jest.mock("./activitySetup", () => ({
 
 const newActivities = [
     {
+        anonymous: false,
         description: "a-description-new",
         icon: "a-icon-new",
         id: "a-id",
@@ -31,6 +34,7 @@ const newActivities = [
         visible: false,
     },
     {
+        anonymous: false,
         description: "b-description-new",
         icon: "b-icon-new",
         id: "b-id",

@@ -36,6 +36,7 @@ TOOL_XML_1 = """
         <resource type="gpu_memory_min">4042</resource>
         <resource type="cuda_device_count_min">1</resource>
         <resource type="cuda_device_count_max">2</resource>
+        <resource type="shm_size">67108864</resource>
     </requirements>
     <outputs>
         <data name="out1" format="bam" from_work_dir="out1.bam" />
@@ -140,6 +141,8 @@ requirements:
     cuda_device_count_min: 1
   - type: resource
     cuda_device_count_max: 2
+  - type: resource
+    shm_size: 67108864
 containers:
   - type: docker
     identifier: "awesome/bowtie"
@@ -331,6 +334,7 @@ class TestXmlLoader(BaseLoaderTestCase):
         assert resource_requirements[3].resource_type == "gpu_memory_min"
         assert resource_requirements[4].resource_type == "cuda_device_count_min"
         assert resource_requirements[5].resource_type == "cuda_device_count_max"
+        assert resource_requirements[6].resource_type == "shm_size"
         assert not resource_requirements[0].runtime_required
 
     def test_outputs(self):
@@ -506,7 +510,7 @@ class TestYamlLoader(BaseLoaderTestCase):
             "resolve_dependencies": False,
             "shell": "/bin/sh",
         }
-        assert len(resource_requirements) == 6
+        assert len(resource_requirements) == 7
         assert resource_requirements[0].to_dict() == {"resource_type": "cores_min", "value_or_expression": 1}
         assert resource_requirements[1].to_dict() == {"resource_type": "cuda_version_min", "value_or_expression": 10.2}
         assert resource_requirements[2].to_dict() == {
@@ -521,6 +525,10 @@ class TestYamlLoader(BaseLoaderTestCase):
         assert resource_requirements[5].to_dict() == {
             "resource_type": "cuda_device_count_max",
             "value_or_expression": 2,
+        }
+        assert resource_requirements[6].to_dict() == {
+            "resource_type": "shm_size",
+            "value_or_expression": 67108864,
         }
 
     def test_outputs(self):
@@ -693,6 +701,79 @@ class TestExpressionTestToolLoader(BaseLoaderTestCase):
         assert output0["attributes"]["object"] is None
 
 
+class TestDefaultDataTestToolLoader(BaseLoaderTestCase):
+    source_file_name = os.path.join(galaxy_directory(), "test/functional/tools/for_workflows/cat_default.xml")
+    source_contents = None
+
+    def test_input_parsing(self):
+        input_pages = self._tool_source.parse_input_pages()
+        assert input_pages.inputs_defined
+        page_sources = input_pages.page_sources
+        assert len(page_sources) == 1
+        page_source = page_sources[0]
+        input_sources = page_source.parse_input_sources()
+        assert len(input_sources) == 1
+        data_input = input_sources[0]
+        default_dict = data_input.parse_default()
+        assert default_dict
+        assert default_dict["location"] == "https://raw.githubusercontent.com/galaxyproject/galaxy/dev/test-data/1.bed"
+
+
+class TestDefaultCollectionDataTestToolLoader(BaseLoaderTestCase):
+    source_file_name = os.path.join(galaxy_directory(), "test/functional/tools/collection_paired_default.xml")
+    source_contents = None
+
+    def test_input_parsing(self):
+        input_pages = self._tool_source.parse_input_pages()
+        assert input_pages.inputs_defined
+        page_sources = input_pages.page_sources
+        assert len(page_sources) == 1
+        page_source = page_sources[0]
+        input_sources = page_source.parse_input_sources()
+        assert len(input_sources) == 1
+        data_input = input_sources[0]
+        default_dict = data_input.parse_default()
+        assert default_dict
+        assert default_dict["collection_type"] == "paired"
+        elements = default_dict["elements"]
+        assert len(elements) == 2
+        element0 = elements[0]
+        assert element0["identifier"] == "forward"
+        assert element0["location"] == "https://raw.githubusercontent.com/galaxyproject/galaxy/dev/test-data/1.bed"
+        element1 = elements[1]
+        assert element1["identifier"] == "reverse"
+        assert element1["location"] == "https://raw.githubusercontent.com/galaxyproject/galaxy/dev/test-data/1.fasta"
+
+
+class TestDefaultNestedCollectionDataTestToolLoader(BaseLoaderTestCase):
+    source_file_name = os.path.join(galaxy_directory(), "test/functional/tools/collection_nested_default.xml")
+    source_contents = None
+
+    def test_input_parsing(self):
+        input_pages = self._tool_source.parse_input_pages()
+        assert input_pages.inputs_defined
+        page_sources = input_pages.page_sources
+        assert len(page_sources) == 1
+        page_source = page_sources[0]
+        input_sources = page_source.parse_input_sources()
+        assert len(input_sources) == 1
+        data_input = input_sources[0]
+        default_dict = data_input.parse_default()
+        assert default_dict
+        assert default_dict["collection_type"] == "list:paired"
+        elements = default_dict["elements"]
+        assert len(elements) == 1
+        element0 = elements[0]
+        assert element0["identifier"] == "i1"
+
+        elements0 = element0["elements"]
+        assert len(elements0) == 2
+        elements00 = elements0[0]
+        assert elements00["identifier"] == "forward"
+        elements01 = elements0[1]
+        assert elements01["identifier"] == "reverse"
+
+
 class TestExpressionOutputDataToolLoader(BaseLoaderTestCase):
     source_file_name = os.path.join(galaxy_directory(), "test/functional/tools/expression_pick_larger_file.xml")
     source_contents = None
@@ -801,6 +882,6 @@ class TestQcStdio(BaseLoaderTestCase):
     def test_tests(self):
         exit, regexes = self._tool_source.parse_stdio()
         assert len(exit) == 2
-        assert len(regexes) == 1
+        assert len(regexes) == 2
         regex = regexes[0]
         assert regex.error_level == 1.1

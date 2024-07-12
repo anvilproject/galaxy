@@ -1,18 +1,17 @@
-import { setActivePinia } from "pinia";
-import flushPromises from "flush-promises";
-import { getLocalVue } from "@tests/jest/helpers";
 import { createTestingPinia } from "@pinia/testing";
+import { getLocalVue } from "@tests/jest/helpers";
 import { shallowMount, type Wrapper } from "@vue/test-utils";
+import flushPromises from "flush-promises";
+import { setActivePinia } from "pinia";
+
+import { generateMessageNotification, generateNewSharedItemNotification } from "@/components/Notifications/test-utils";
+
 import MessageNotification from "@/components/Notifications/Categories/MessageNotification.vue";
 import SharedItemNotification from "@/components/Notifications/Categories/SharedItemNotification.vue";
-import { generateMessageNotification, generateNewSharedItemNotification } from "@/components/Notifications/test-utils";
 
 const localVue = getLocalVue(true);
 
-async function mountComponent(
-    component: typeof MessageNotification | typeof SharedItemNotification,
-    propsData: object = {}
-): Promise<Wrapper<Vue>> {
+async function mountComponent(component: object, propsData: object = {}): Promise<Wrapper<Vue>> {
     const pinia = createTestingPinia();
     setActivePinia(pinia);
 
@@ -36,7 +35,9 @@ describe("Notifications categories", () => {
         notification.content.message = "This is a **markdown** message to test _rendering_";
 
         const wrapper = await mountComponent(MessageNotification, {
-            notification,
+            options: {
+                notification,
+            },
         });
 
         expect(wrapper.find("#notification-message").html()).toContain(
@@ -51,11 +52,8 @@ describe("Notifications categories", () => {
             notification,
         });
 
-        expect(wrapper.text()).toContain(
-            `${capitalizeFirstLetter(notification.content.item_type)} shared with you by ${
-                notification.content.owner_name
-            }`
-        );
+        expect(wrapper.text()).toContain(`${capitalizeFirstLetter(notification.content.item_type)}`);
+        expect(wrapper.text()).toContain(`shared with you by ${notification.content.owner_name}`);
 
         expect(wrapper.find("#notification-message").text()).toContain(
             `The user ${notification.content.owner_name} shared`

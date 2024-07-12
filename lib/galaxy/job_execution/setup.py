@@ -1,4 +1,5 @@
 """Utilities to help job and tool code setup jobs."""
+
 import json
 import os
 import threading
@@ -16,7 +17,7 @@ from typing import (
 from galaxy.files import (
     ConfiguredFileSources,
     DictFileSourcesUserContext,
-    ProvidesUserFileSourcesUserContext,
+    FileSourcesUserContext,
 )
 from galaxy.job_execution.datasets import (
     DatasetPath,
@@ -108,13 +109,13 @@ class JobIO(Dictifiable):
         check_job_script_integrity_count: int,
         check_job_script_integrity_sleep: float,
         file_sources_dict: Dict[str, Any],
-        user_context: Union[ProvidesUserFileSourcesUserContext, Dict["str", Any]],
+        user_context: Union[FileSourcesUserContext, Dict[str, Any]],
         tool_source: Optional[str] = None,
         tool_source_class: Optional["str"] = "XmlToolSource",
         tool_dir: Optional[str] = None,
         is_task: bool = False,
     ):
-        user_context_instance: Union[ProvidesUserFileSourcesUserContext, DictFileSourcesUserContext]
+        user_context_instance: FileSourcesUserContext
         self.file_sources_dict = file_sources_dict
         if isinstance(user_context, dict):
             user_context_instance = DictFileSourcesUserContext(**user_context, file_sources=self.file_sources)
@@ -148,7 +149,7 @@ class JobIO(Dictifiable):
 
     @property
     def job(self):
-        return self.sa_session.query(Job).get(self.job_id)
+        return self.sa_session.get(Job, self.job_id)
 
     @classmethod
     def from_json(cls, path, sa_session):
@@ -206,32 +207,36 @@ class JobIO(Dictifiable):
         return cast(OutputHdasAndType, self.job_outputs.output_hdas_and_paths)
 
     def get_input_dataset_fnames(self, ds: DatasetInstance) -> List[str]:
-        filenames = [ds.file_name]
+        filenames = [ds.get_file_name()]
         # we will need to stage in metadata file names also
         # TODO: would be better to only stage in metadata files that are actually needed (found in command line, referenced in config files, etc.)
         for value in ds.metadata.values():
             if isinstance(value, MetadataFile):
-                filenames.append(value.file_name)
+                filenames.append(value.get_file_name())
+        if ds.dataset and ds.dataset.extra_files_path_exists():
+            filenames.append(ds.dataset.extra_files_path)
         return filenames
 
-    def get_input_fnames(self) -> List[str]:
+    def get_input_datasets(self) -> List[DatasetInstance]:
         job = self.job
+        return [
+            da.dataset for da in job.input_datasets + job.input_library_datasets if da.dataset
+        ]  # da is JobToInputDatasetAssociation object
+
+    def get_input_fnames(self) -> List[str]:
         filenames = []
-        for da in job.input_datasets + job.input_library_datasets:  # da is JobToInputDatasetAssociation object
-            if da.dataset:
-                filenames.extend(self.get_input_dataset_fnames(da.dataset))
+        for ds in self.get_input_datasets():
+            filenames.extend(self.get_input_dataset_fnames(ds))
         return filenames
 
     def get_input_paths(self) -> List[DatasetPath]:
-        job = self.job
         paths = []
-        for da in job.input_datasets + job.input_library_datasets:  # da is JobToInputDatasetAssociation object
-            if da.dataset:
-                paths.append(self.get_input_path(da.dataset))
+        for ds in self.get_input_datasets():
+            paths.append(self.get_input_path(ds))
         return paths
 
     def get_input_path(self, dataset: DatasetInstance) -> DatasetPath:
-        real_path = dataset.file_name
+        real_path = dataset.get_file_name()
         false_path = self.dataset_path_rewriter.rewrite_dataset_path(dataset, "input")
         return DatasetPath(
             dataset.dataset.id,
@@ -250,7 +255,7 @@ class JobIO(Dictifiable):
 
     def get_output_path(self, dataset):
         if getattr(dataset, "fake_dataset_association", False):
-            return dataset.file_name
+            return dataset.get_file_name()
         assert dataset.id is not None, f"{dataset} needs to be flushed to find output path"
         for hda, dataset_path in self.output_hdas_and_paths.values():
             if hda.id == dataset.id:
@@ -276,13 +281,16 @@ class JobIO(Dictifiable):
             da_false_path = dataset_path_rewriter.rewrite_dataset_path(da.dataset, "output")
             mutable = da.dataset.dataset.external_filename is None
             dataset_path = DatasetPath(
-                da.dataset.dataset.id, da.dataset.file_name, false_path=da_false_path, mutable=mutable
+                da.dataset.dataset.id,
+                da.dataset.get_file_name(sync_cache=False),
+                false_path=da_false_path,
+                mutable=mutable,
             )
             job_outputs.append(JobOutput(da.name, da.dataset, dataset_path))
 
         if special:
             false_path = dataset_path_rewriter.rewrite_dataset_path(special, "output")
-            dsp = DatasetPath(special.dataset.id, special.dataset.file_name, false_path)
+            dsp = DatasetPath(special.dataset.id, special.dataset.get_file_name(), false_path)
             job_outputs.append(JobOutput("output_file", special.fda, dsp))
 
         self.job_outputs.set_job_outputs(job_outputs)

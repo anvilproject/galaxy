@@ -86,7 +86,7 @@ class CloudManager(sharable.SharableModelManager):
             if len(missing_credentials) > 0:
                 raise RequestParameterMissingException(
                     "The following required key(s) are missing from the provided "
-                    "credentials object: {}".format(missing_credentials)
+                    f"credentials object: {missing_credentials}"
                 )
             session_token = credentials.get("SessionToken")
             config = {"aws_access_key": access, "aws_secret_key": secret, "aws_session_token": session_token}
@@ -107,7 +107,7 @@ class CloudManager(sharable.SharableModelManager):
             if len(missing_credentials) > 0:
                 raise RequestParameterMissingException(
                     "The following required key(s) are missing from the provided "
-                    "credentials object: {}".format(missing_credentials)
+                    f"credentials object: {missing_credentials}"
                 )
 
             config = {
@@ -145,7 +145,7 @@ class CloudManager(sharable.SharableModelManager):
             if len(missing_credentials) > 0:
                 raise RequestParameterMissingException(
                     "The following required key(s) are missing from the provided "
-                    "credentials object: {}".format(missing_credentials)
+                    f"credentials object: {missing_credentials}"
                 )
             config = {
                 "os_username": username,
@@ -161,8 +161,8 @@ class CloudManager(sharable.SharableModelManager):
             connection = CloudProviderFactory().create_provider(ProviderList.GCP, config)
         else:
             raise RequestParameterInvalidException(
-                "Unrecognized provider '{}'; the following are the supported "
-                "providers: {}.".format(provider, SUPPORTED_PROVIDERS.keys())
+                f"Unrecognized provider '{provider}'; the following are the supported "
+                f"providers: {SUPPORTED_PROVIDERS.keys()}."
             )
 
         # The authorization-assertion mechanism of Cloudbridge assumes a user has an elevated privileges,
@@ -281,17 +281,19 @@ class CloudManager(sharable.SharableModelManager):
                 )
             if key is None:
                 log.exception(
-                    "Could not get object `{}` for user `{}`. Object may not exist, or the provided credentials are "
-                    "invalid or not authorized to read the bucket/object.".format(obj, trans.user.id)
+                    "Could not get object `%s` for user `%s`. Object may not exist, or the provided credentials are "
+                    "invalid or not authorized to read the bucket/object.",
+                    obj,
+                    trans.user.id,
                 )
                 raise ObjectNotFound(
-                    "Could not get the object `{}`. Please check if the object exists, and credentials are valid and "
-                    "authorized to read the bucket and object. ".format(obj)
+                    f"Could not get the object `{obj}`. Please check if the object exists, and credentials are valid and "
+                    "authorized to read the bucket and object. "
                 )
 
             params = Params(self._get_inputs(obj, key, input_args), sanitize=False)
             incoming = params.__dict__
-            history = trans.sa_session.query(trans.app.model.History).get(history_id)
+            history = trans.sa_session.get(model.History, history_id)
             if not history:
                 raise ObjectNotFound("History with the ID provided was not found.")
             output = trans.app.toolbox.get_tool("upload1").handle_input(trans, incoming, history=history)
@@ -299,9 +301,7 @@ class CloudManager(sharable.SharableModelManager):
             job_errors = output.get("job_errors", [])
             if job_errors:
                 raise ValueError(
-                    "Following error occurred while getting the given object(s) from {}: {}".format(
-                        cloudauthz.provider, job_errors
-                    )
+                    f"Following error occurred while getting the given object(s) from {cloudauthz.provider}: {job_errors}"
                 )
             else:
                 for d in output["out_data"]:
@@ -358,7 +358,7 @@ class CloudManager(sharable.SharableModelManager):
 
         cloudauthz = trans.app.authnz_manager.try_get_authz_config(trans.sa_session, trans.user.id, authz_id)
 
-        history = trans.sa_session.query(trans.app.model.History).get(history_id)
+        history = trans.sa_session.get(model.History, history_id)
         if not history:
             raise ObjectNotFound("History with the provided ID not found.")
 
@@ -391,9 +391,10 @@ class CloudManager(sharable.SharableModelManager):
                 except Exception as e:
                     err_msg = f"maybe invalid or unauthorized credentials. {util.unicodify(e)}"
                     log.debug(
-                        "Failed to send the dataset `{}` per user `{}` request to cloud, {}".format(
-                            object_label, trans.user.id, err_msg
-                        )
+                        "Failed to send the dataset `%s` per user `%s` request to cloud, %s",
+                        object_label,
+                        trans.user.id,
+                        err_msg,
                     )
                     failed.append(json.dumps({"object": object_label, "error": err_msg}))
         return sent, failed

@@ -1,12 +1,16 @@
-import { shallowMount } from "@vue/test-utils";
-import { getLocalVue } from "tests/jest/helpers";
-import axios from "axios";
-import MockAdapter from "axios-mock-adapter";
-import flushPromises from "flush-promises";
 import { createTestingPinia } from "@pinia/testing";
+import { shallowMount } from "@vue/test-utils";
+import flushPromises from "flush-promises";
 import { setActivePinia } from "pinia";
-import { useHistoryStore, type HistorySummary } from "@/stores/historyStore";
+import { getLocalVue } from "tests/jest/helpers";
+
+import type { HistorySummary } from "@/api";
+import { mockFetcher } from "@/api/schema/__mocks__";
+import { useHistoryStore } from "@/stores/historyStore";
+
 import HistoryArchiveWizard from "./HistoryArchiveWizard.vue";
+
+jest.mock("@/api/schema");
 
 jest.mock("@/composables/config", () => ({
     useConfig: jest.fn(() => ({
@@ -35,7 +39,7 @@ const ARCHIVED_TEST_HISTORY = {
 const REMOTE_FILES_API_ENDPOINT = new RegExp("/api/remote_files/plugins");
 
 async function mountComponentWithHistory(history?: HistorySummary) {
-    const pinia = createTestingPinia();
+    const pinia = createTestingPinia({ stubActions: false });
     setActivePinia(pinia);
     const historyStore = useHistoryStore(pinia);
 
@@ -46,21 +50,15 @@ async function mountComponentWithHistory(history?: HistorySummary) {
     const wrapper = shallowMount(HistoryArchiveWizard, {
         propsData: { historyId: TEST_HISTORY_ID },
         localVue,
+        pinia,
     });
     await flushPromises();
     return wrapper;
 }
 
 describe("HistoryArchiveWizard.vue", () => {
-    let axiosMock: MockAdapter;
-
     beforeEach(async () => {
-        axiosMock = new MockAdapter(axios);
-        axiosMock.onGet(REMOTE_FILES_API_ENDPOINT).reply(200, []);
-    });
-
-    afterEach(() => {
-        axiosMock.restore();
+        mockFetcher.path(REMOTE_FILES_API_ENDPOINT).method("get").mock({ data: [] });
     });
 
     it("should render the history name in the header", async () => {
@@ -78,18 +76,23 @@ describe("HistoryArchiveWizard.vue", () => {
     });
 
     it("should render both archival modes when writeable file sources and celery tasks are available", async () => {
-        axiosMock.onGet(REMOTE_FILES_API_ENDPOINT).reply(200, [
-            {
-                id: "test-posix-source",
-                type: "posix",
-                uri_root: "gxfiles://test-posix-source",
-                label: "TestSource",
-                doc: "For testing",
-                writable: true,
-                requires_roles: undefined,
-                requires_groups: undefined,
-            },
-        ]);
+        mockFetcher
+            .path(REMOTE_FILES_API_ENDPOINT)
+            .method("get")
+            .mock({
+                data: [
+                    {
+                        id: "test-posix-source",
+                        type: "posix",
+                        uri_root: "gxfiles://test-posix-source",
+                        label: "TestSource",
+                        doc: "For testing",
+                        writable: true,
+                        requires_roles: undefined,
+                        requires_groups: undefined,
+                    },
+                ],
+            });
         const wrapper = await mountComponentWithHistory(TEST_HISTORY as HistorySummary);
 
         const optionTabs = wrapper.findAll(".archival-option-tabs");

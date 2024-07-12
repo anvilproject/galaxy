@@ -39,6 +39,7 @@ from galaxy.datatypes.util.gff_util import (
     GFFReaderWrapper,
     parse_gff_attributes,
 )
+from galaxy.exceptions import MessageException
 from galaxy.model import DatasetInstance
 from galaxy.visualization.data_providers.basic import BaseDataProvider
 from galaxy.visualization.data_providers.cigar import get_ref_based_read_seq_and_cigar
@@ -48,7 +49,7 @@ from galaxy.visualization.data_providers.cigar import get_ref_based_read_seq_and
 #
 
 # pysam 0.16.0.1 emits logs containing the word 'Error', this can confuse the stdout/stderr checkers.
-# Can be be removed once https://github.com/pysam-developers/pysam/issues/939 is resolved.
+# Can be removed once https://github.com/pysam-developers/pysam/issues/939 is resolved.
 pysam.set_verbosity(0)
 
 PAYLOAD_LIST_TYPE = List[Optional[Union[str, int, float, List[Tuple[int, int]]]]]
@@ -106,43 +107,53 @@ class FeatureLocationIndexDataProvider(BaseDataProvider):
         self.converted_dataset = converted_dataset
 
     def get_data(self, query):
+        if self.converted_dataset is None or not self.converted_dataset.is_ok:
+            raise MessageException("The dataset is not available or is in an error state.")
         # Init.
-        textloc_file = open(self.converted_dataset.file_name)
-        line_len = int(textloc_file.readline())
-        file_len = os.path.getsize(self.converted_dataset.file_name)
-        query = query.lower()
+        result = []
+        with open(self.converted_dataset.get_file_name()) as textloc_file:
+            line = textloc_file.readline()
+            if not line:
+                raise MessageException("The dataset is empty.")
+            try:
+                line_len = int(line)
+            except ValueError:
+                raise MessageException(f"Expected an integer at first line, but found: '{line}'")
+            if line_len < 1:
+                raise MessageException(f"The first line must be a positive integer, but found: {line_len}")
 
-        # Find query in file using binary search.
-        low = 0
-        high = int(file_len / line_len)
-        while low < high:
-            mid: int = (low + high) // 2
-            position = mid * line_len
+            file_len = os.path.getsize(self.converted_dataset.get_file_name())
+            query = query.lower()
+
+            # Find query in file using binary search.
+            low = 0
+            high = int(file_len / line_len)
+            while low < high:
+                mid: int = (low + high) // 2
+                position = mid * line_len
+                textloc_file.seek(position)
+
+                # Compare line with query and update low, high.
+                line = textloc_file.readline()
+                if line < query:
+                    low = mid + 1
+                else:
+                    high = mid
+
+            # Need to move back one line because last line read may be included in
+            # results.
+            position = low * line_len
             textloc_file.seek(position)
 
-            # Compare line with query and update low, high.
-            line = textloc_file.readline()
-            if line < query:
-                low = mid + 1
-            else:
-                high = mid
+            # At right point in file, generate hits.
+            while True:
+                line = textloc_file.readline()
+                if not line.startswith(query):
+                    break
+                if line[-1:] == "\n":
+                    line = line[:-1]
+                result.append(line.split()[1:])
 
-        # Need to move back one line because last line read may be included in
-        # results.
-        position = low * line_len
-        textloc_file.seek(position)
-
-        # At right point in file, generate hits.
-        result = []
-        while True:
-            line = textloc_file.readline()
-            if not line.startswith(query):
-                break
-            if line[-1:] == "\n":
-                line = line[:-1]
-            result.append(line.split()[1:])
-
-        textloc_file.close()
         return result
 
 
@@ -349,8 +360,8 @@ class TabixDataProvider(GenomeDataProvider, FilterableMixin):
     def open_data_file(self):
         # We create a symlink to the index file. This is
         # required until https://github.com/pysam-developers/pysam/pull/586 is merged.
-        index_path = self.converted_dataset.file_name
-        with pysam.TabixFile(self.dependencies["bgzip"].file_name, index=index_path) as f:
+        index_path = self.converted_dataset.get_file_name()
+        with pysam.TabixFile(self.dependencies["bgzip"].get_file_name(), index=index_path) as f:
             yield f
 
     def get_iterator(self, data_file, chrom, start, end, **kwargs) -> Iterator[str]:
@@ -587,7 +598,7 @@ class RawBedDataProvider(BedDataProvider):
         data_file.seek(0)
 
         def line_filter_iter():
-            with open(self.original_dataset.file_name) as data_file:
+            with open(self.original_dataset.get_file_name()) as data_file:
                 for line in data_file:
                     if line.startswith("track") or line.startswith("browser"):
                         continue
@@ -774,7 +785,7 @@ class RawVcfDataProvider(VcfDataProvider):
 
     @contextmanager
     def open_data_file(self):
-        with open(self.original_dataset.file_name) as f:
+        with open(self.original_dataset.get_file_name()) as f:
             yield f
 
     def get_iterator(self, data_file, chrom, start, end, **kwargs):
@@ -840,7 +851,7 @@ class BamDataProvider(GenomeDataProvider, FilterableMixin):
 
         # Open current BAM file using index.
         bamfile = pysam.AlignmentFile(
-            self.original_dataset.file_name, mode="rb", index_filename=self.converted_dataset.file_name
+            self.original_dataset.get_file_name(), mode="rb", index_filename=self.converted_dataset.get_file_name()
         )
 
         # TODO: write headers as well?
@@ -874,7 +885,7 @@ class BamDataProvider(GenomeDataProvider, FilterableMixin):
     def open_data_file(self):
         # Attempt to open the BAM file with index
         with pysam.AlignmentFile(
-            self.original_dataset.file_name, mode="rb", index_filename=self.converted_dataset.file_name
+            self.original_dataset.get_file_name(), mode="rb", index_filename=self.converted_dataset.get_file_name()
         ) as f:
             yield f
 
@@ -1164,8 +1175,7 @@ class BBIDataProvider(GenomeDataProvider):
     dataset_type = "bigwig"
 
     @abc.abstractmethod
-    def _get_dataset(self) -> Tuple[IO[bytes], Union[BigBedFile, BigWigFile]]:
-        ...
+    def _get_dataset(self) -> Tuple[IO[bytes], Union[BigBedFile, BigWigFile]]: ...
 
     def valid_chroms(self):
         # No way to return this info as of now
@@ -1233,8 +1243,7 @@ class BBIDataProvider(GenomeDataProvider):
             # Get summary; this samples at intervals of length
             # (end - start)/num_points -- i.e. drops any fractional component
             # of interval length.
-            summary = _summarize_bbi(bbi, chrom, start, end, num_points)
-            if summary:
+            if summary := _summarize_bbi(bbi, chrom, start, end, num_points):
                 # mean = summary.sum_data / summary.valid_count
 
                 # Standard deviation by bin, not yet used
@@ -1292,7 +1301,7 @@ class BBIDataProvider(GenomeDataProvider):
 class BigBedDataProvider(BBIDataProvider):
     def _get_dataset(self):
         # Nothing converts to bigBed so we don't consider converted dataset
-        f = open(self.original_dataset.file_name, "rb")
+        f = open(self.original_dataset.get_file_name(), "rb")
         return f, BigBedFile(file=f)
 
 
@@ -1304,9 +1313,9 @@ class BigWigDataProvider(BBIDataProvider):
 
     def _get_dataset(self):
         if self.converted_dataset is not None:
-            f = open(self.converted_dataset.file_name, "rb")
+            f = open(self.converted_dataset.get_file_name(), "rb")
         else:
-            f = open(self.original_dataset.file_name, "rb")
+            f = open(self.original_dataset.get_file_name(), "rb")
         return f, BigWigFile(file=f)
 
 
@@ -1320,8 +1329,8 @@ class IntervalIndexDataProvider(GenomeDataProvider, FilterableMixin):
     dataset_type = "interval_index"
 
     def write_data_to_file(self, regions, filename):
-        index = Indexes(self.converted_dataset.file_name)
-        with open(self.original_dataset.file_name) as source, open(filename, "w") as out:
+        index = Indexes(self.converted_dataset.get_file_name())
+        with open(self.original_dataset.get_file_name()) as source, open(filename, "w") as out:
             for region in regions:
                 # Write data from region.
                 chrom = region.chrom
@@ -1342,7 +1351,7 @@ class IntervalIndexDataProvider(GenomeDataProvider, FilterableMixin):
 
     @contextmanager
     def open_data_file(self):
-        i = Indexes(self.converted_dataset.file_name)
+        i = Indexes(self.converted_dataset.get_file_name())
         yield i
 
     def get_iterator(self, data_file, chrom, start, end, **kwargs) -> Iterator[str]:
@@ -1358,7 +1367,7 @@ class IntervalIndexDataProvider(GenomeDataProvider, FilterableMixin):
     def process_data(self, iterator, start_val=0, max_vals=None, **kwargs):
         results = []
         message = None
-        with open(self.original_dataset.file_name) as source:
+        with open(self.original_dataset.get_file_name()) as source:
             # Build data to return. Payload format is:
             # [ <guid/offset>, <start>, <end>, <name>, <score>, <strand>, <thick_start>,
             #   <thick_end>, <blocks> ]
@@ -1402,7 +1411,7 @@ class RawGFFDataProvider(GenomeDataProvider):
         Returns an iterator that provides data in the region chrom:start-end as well as
         a file offset.
         """
-        source = open(self.original_dataset.file_name)
+        source = open(self.original_dataset.get_file_name())
 
         # Read first line in order to match chrom naming format.
         line = source.readline()

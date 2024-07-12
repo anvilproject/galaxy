@@ -1,9 +1,11 @@
 import { createTestingPinia } from "@pinia/testing";
-import { PiniaVuePlugin } from "pinia";
 import { mount } from "@vue/test-utils";
+import { PiniaVuePlugin } from "pinia";
 import { getLocalVue } from "tests/jest/helpers";
+
 import { Activities } from "@/stores/activitySetup";
 import { useActivityStore } from "@/stores/activityStore";
+
 import mountTarget from "./ActivitySettings.vue";
 
 const localVue = getLocalVue();
@@ -27,10 +29,7 @@ function testActivity(id, newOptions = {}) {
 }
 
 async function testSearch(wrapper, query, result) {
-    const searchField = wrapper.find("input");
-    searchField.element.value = query;
-    searchField.trigger("change");
-    await wrapper.vm.$nextTick();
+    await wrapper.setProps({ query });
     const filtered = wrapper.findAll(activityItemSelector);
     expect(filtered.length).toBe(result);
 }
@@ -46,6 +45,9 @@ describe("ActivitySettings", () => {
         wrapper = mount(mountTarget, {
             localVue,
             pinia,
+            props: {
+                query: "",
+            },
             stubs: {
                 icon: { template: "<div></div>" },
             },

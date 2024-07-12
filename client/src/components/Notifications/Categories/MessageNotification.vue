@@ -1,45 +1,65 @@
 <script setup lang="ts">
-import { computed } from "vue";
-import { BCol, BRow } from "bootstrap-vue";
-import Heading from "@/components/Common/Heading.vue";
-import { faInbox } from "@fortawesome/free-solid-svg-icons";
 import { library } from "@fortawesome/fontawesome-svg-core";
+import { faInbox } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
-import NotificationActions from "@/components/Notifications/NotificationActions.vue";
-import type { MessageNotification } from "@/components/Notifications";
+import { computed } from "vue";
+
+import { type MessageNotification } from "@/api/notifications";
 import { useMarkdown } from "@/composables/markdown";
+
+import NotificationActions from "@/components/Notifications/NotificationActions.vue";
 
 library.add(faInbox);
 
-interface Props {
-    notification: MessageNotification;
-}
+type PartialNotification = Partial<MessageNotification> & { content: MessageNotification["content"] };
+
+type Options =
+    | {
+          previewMode?: false;
+          notification: MessageNotification;
+      }
+    | {
+          previewMode: true;
+          notification: PartialNotification;
+      };
+
+const props = defineProps<{
+    options: Options;
+}>();
 
 const { renderMarkdown } = useMarkdown({ openLinksInNewPage: true });
 
-const props = defineProps<Props>();
-
 const notificationVariant = computed(() => {
-    switch (props.notification.variant) {
+    switch (props.options.notification.variant) {
         case "urgent":
             return "danger";
         default:
-            return props.notification.variant;
+            return props.options.notification.variant;
     }
 });
 </script>
 
 <template>
-    <BCol>
-        <BRow align-v="center">
-            <Heading size="md" :bold="!notification.seen_time" class="mb-0">
-                <FontAwesomeIcon :class="`text-${notificationVariant}`" icon="inbox" />
-                {{ notification.content.subject }}
-            </Heading>
-            <NotificationActions :notification="notification" />
-        </BRow>
-        <BRow>
-            <span id="notification-message" v-html="renderMarkdown(notification.content.message)" />
-        </BRow>
-    </BCol>
+    <div class="notification-container">
+        <div class="notification-header">
+            <div :class="!props.options.notification.seen_time ? 'font-weight-bold' : ''" class="notification-title">
+                <FontAwesomeIcon :class="`text-${notificationVariant}`" :icon="faInbox" fixed-width size="sm" />
+                {{ props.options.notification?.content?.subject }}
+            </div>
+        </div>
+
+        <NotificationActions
+            v-if="!props.options.previewMode"
+            class="notification-actions"
+            :notification="props.options.notification" />
+
+        <span
+            id="notification-message"
+            class="notification-message"
+            v-html="renderMarkdown(props.options.notification.content.message)" />
+    </div>
 </template>
+
+<style scoped lang="scss">
+@import "style.scss";
+</style>

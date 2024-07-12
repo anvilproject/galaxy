@@ -12,7 +12,7 @@ class TestMutableColumn(BaseModelTestCase):
         with transaction(session):
             session.commit()
         self.model.session.expunge_all()
-        return self.model.session.query(model.DynamicTool).get(item_id)
+        return self.model.session.get(model.DynamicTool, item_id)
 
     def test_metadata_mutable_column(self):
         w = model.DynamicTool()
@@ -20,7 +20,7 @@ class TestMutableColumn(BaseModelTestCase):
         session = self.model.session
         with transaction(session):
             session.commit()
-        w.value = {"x": "z"}
+        w.value = {"x": "z"}  # type:ignore[assignment]
         persisted = self.persist_and_reload(w)
         assert persisted.value == {"x": "z"}
         persisted.value["x"] = "1"

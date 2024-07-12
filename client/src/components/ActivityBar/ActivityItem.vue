@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { useRouter } from "vue-router/composables";
-import Popper from "@/components/Popper/Popper.vue";
-import TextShort from "@/components/Common/TextShort.vue";
 import { FontAwesomeIcon } from "@fortawesome/vue-fontawesome";
+import { useRouter } from "vue-router/composables";
+
+import TextShort from "@/components/Common/TextShort.vue";
+import Popper from "@/components/Popper/Popper.vue";
 
 const router = useRouter();
 
@@ -23,6 +24,7 @@ export interface Props {
     progressStatus?: string;
     options?: Option[];
     to?: string;
+    variant?: string;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -36,6 +38,7 @@ const props = withDefaults(defineProps<Props>(), {
     to: undefined,
     tooltip: undefined,
     tooltipPlacement: "right",
+    variant: "primary",
 });
 
 const emit = defineEmits<{
@@ -69,7 +72,7 @@ function onClick(evt: MouseEvent): void {
                                 width: `${Math.round(progressPercentage)}%`,
                             }" />
                     </span>
-                    <span class="position-relative">
+                    <span class="position-relative" :class="`text-${variant}`">
                         <div class="nav-icon">
                             <span v-if="indicator > 0" class="nav-indicator" data-description="activity indicator">
                                 {{ Math.min(indicator, 99) }}

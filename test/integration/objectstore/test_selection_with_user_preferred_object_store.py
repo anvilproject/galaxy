@@ -8,6 +8,8 @@ from typing import (
     Optional,
 )
 
+from sqlalchemy import select
+
 from galaxy.model import Dataset
 from galaxy_test.base.populators import WorkflowPopulator
 from galaxy_test.base.workflow_fixtures import (
@@ -468,9 +470,8 @@ class TestObjectStoreSelectionWithPreferredObjectStoresIntegration(BaseObjectSto
     def _storage_info(self, hda):
         return self.dataset_populator.dataset_storage_info(hda["id"])
 
-    def _set_user_preferred_object_store_id(self, store_id: Optional[str]):
-        user_properties = self.dataset_populator.update_user({"preferred_object_store_id": store_id})
-        assert user_properties["preferred_object_store_id"] == store_id
+    def _set_user_preferred_object_store_id(self, store_id: Optional[str]) -> None:
+        self.dataset_populator.set_user_preferred_object_store_id(store_id)
 
     def _reset_user_preferred_object_store_id(self):
         self._set_user_preferred_object_store_id(None)
@@ -482,5 +483,7 @@ class TestObjectStoreSelectionWithPreferredObjectStoresIntegration(BaseObjectSto
 
     @property
     def _latest_dataset(self):
-        latest_dataset = self._app.model.session.query(Dataset).order_by(Dataset.table.c.id.desc()).first()
+        latest_dataset = self._app.model.session.scalars(
+            select(Dataset).order_by(Dataset.table.c.id.desc()).limit(1)
+        ).first()
         return latest_dataset

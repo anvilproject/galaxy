@@ -1,6 +1,6 @@
 """ Module contains test fixtures meant to aide in the testing of jobs and
 tool evaluation. Such extensive "fixtures" are something of an anti-pattern
-so use of this should be limitted to tests of very 'extensive' classes.
+so use of this should be limited to tests of very 'extensive' classes.
 """
 
 import os.path
@@ -123,7 +123,7 @@ class MockContext:
     def __init__(self, model_objects=None):
         self.expunged_all = False
         self.flushed = False
-        self.model_objects = model_objects or defaultdict(lambda: {})
+        self.model_objects = model_objects or defaultdict(dict)
         self.created_objects = []
         self.current = self
 
@@ -133,11 +133,17 @@ class MockContext:
     def query(self, clazz):
         return MockQuery(self.model_objects.get(clazz))
 
+    def get(self, clazz, id):
+        return self.query(clazz).get(id)
+
     def flush(self):
         self.flushed = True
 
     def add(self, object):
         self.created_objects.append(object)
+
+    def commit(self):
+        pass
 
 
 class MockQuery:

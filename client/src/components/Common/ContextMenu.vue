@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import { type Ref, ref, watch } from "vue";
+
 import Popper from "@/components/Popper/Popper.vue";
-import { ref, watch, type Ref } from "vue";
 
 interface Position {
     left: string;
@@ -32,7 +33,13 @@ watch(
 
 <template>
     <div v-if="visible">
-        <Popper placement="right" class="context-menu" :style="placeContextMenu" :force-show="true" :dark-mode="false">
+        <Popper
+            placement="right"
+            class="context-menu"
+            :style="placeContextMenu"
+            :force-show="true"
+            :arrow="false"
+            mode="light">
             <div class="context-menu-slot">
                 <slot />
             </div>
@@ -46,7 +53,7 @@ watch(
 
 .context-menu {
     position: fixed;
-    z-index: 11;
+    z-index: 200;
 }
 
 .context-menu-overlay {
